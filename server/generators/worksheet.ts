@@ -1,16 +1,25 @@
 /**
- * Worksheet Generator (Single Page / Batch)
- * Generates educational worksheets with GPT content overlaid as real text on a decorative border.
+ * Worksheet Generator
+ * Generates educational worksheets with GPT content overlaid on themed decorative borders.
  *
  * Flow per page:
  * 1. Generate a decorative border/frame image (Flux) — center is intentionally blank
  * 2. Generate age-appropriate educational content (GPT) for the subject/skill
  * 3. Overlay the content as real text in the center area via pdfAssembly contentBlocks
+ *
+ * Features:
+ * - Cover page with title and subject info
+ * - 5+ activity pages with varied activity types
+ * - Each page has: title, instructions, activity items
+ * - Semi-transparent background behind text for readability
  */
 import { buildImagePrompt, generatePageImage, generateContent } from "./shared";
 import { createJob, getJob, updateJob, addPageResult, type GenerationJob, type PageResult } from "../jobs";
 import { assemblePdf, fetchImageBuffer, PageContent } from "../pdfAssembly";
 import { storagePut } from "../storage";
+
+const PAGE_WIDTH = 612;
+const PAGE_HEIGHT = 792;
 
 export interface WorksheetOptions {
   subject: string;
@@ -31,9 +40,15 @@ const SKILL_MAP: Record<string, string[]> = {
   "SEL": ["Emotions", "Friendship", "Kindness", "Self-Regulation", "Empathy", "Conflict Resolution", "Growth Mindset"],
 };
 
-/**
- * Parse grade level string into a human-readable age range for GPT prompting.
- */
+const ACTIVITY_TYPES = [
+  "fill-in-the-blank",
+  "matching",
+  "multiple-choice",
+  "short-answer",
+  "true-or-false",
+  "ordering/sequencing",
+];
+
 function gradeToAgeRange(gradeLevel: string): string {
   if (gradeLevel.includes("Pre-K") || gradeLevel.includes("Preschool")) return "ages 3-5";
   if (gradeLevel.includes("K") || gradeLevel.includes("Kindergarten")) return "ages 5-6";
@@ -47,20 +62,21 @@ function gradeToAgeRange(gradeLevel: string): string {
 }
 
 /**
- * Generate age-appropriate worksheet content using GPT.
- * Returns an array of content lines ready to be overlaid as text.
+ * Generate age-appropriate worksheet content using GPT with varied activity types.
  */
-async function generateWorksheetContent(opts: WorksheetOptions, pageVariant: number): Promise<string[]> {
+async function generateWorksheetContent(opts: WorksheetOptions, pageVariant: number): Promise<{ title: string; instructions: string; items: string[]; activityType: string }> {
   const ageRange = gradeToAgeRange(opts.gradeLevel);
+  const activityType = ACTIVITY_TYPES[pageVariant % ACTIVITY_TYPES.length];
 
   const systemPrompt = `You are an expert elementary school teacher creating engaging, age-appropriate educational worksheets.
 Your worksheets are clear, encouraging, and perfectly matched to the student's level.
-Always include a worksheet title, clear instructions, and 4-6 activity items with answer lines.`;
+Always include a worksheet title, clear instructions, and 5-8 activity items.`;
 
   const userPrompt = `Create worksheet content for:
 - Subject: ${opts.subject}
 - Skill: ${opts.specificSkill}
 - Grade Level: ${opts.gradeLevel} (${ageRange})
+- Activity Type: ${activityType}
 - Variant: ${pageVariant + 1} (make this unique from other variants)
 
 Return a JSON object with this exact structure:
@@ -69,23 +85,21 @@ Return a JSON object with this exact structure:
   "instructions": "Clear one-sentence instruction for the student",
   "items": [
     "Item 1 text with blank line indicator using ___________",
-    "Item 2 text with blank line indicator using ___________",
-    "Item 3 text with blank line indicator using ___________",
-    "Item 4 text with blank line indicator using ___________",
-    "Item 5 text with blank line indicator using ___________",
-    "Item 6 text with blank line indicator using ___________"
+    "Item 2 text...",
+    "Item 3 text...",
+    "Item 4 text...",
+    "Item 5 text...",
+    "Item 6 text..."
   ]
 }
 
-Examples for SEL / Growth Mindset (ages 6-8):
-- "Something I'm proud of learning: ___________"
-- "When something is hard, I can try: ___________"
-- "A mistake I learned from: ___________"
-
-Examples for Math / Addition (ages 6-7):
-- "3 + 4 = ___________"
-- "7 + 2 = ___________"
-- "5 + 5 = ___________"
+For ${activityType} format:
+- fill-in-the-blank: sentences with ___________ for missing words
+- matching: "Match: [term] → ___________" format
+- multiple-choice: "Q: question? a) b) c) d)" format
+- short-answer: questions requiring brief written answers with lines
+- true-or-false: statements followed by "True / False: ___"
+- ordering/sequencing: "Put in order: [items to sequence]"
 
 Make all items age-appropriate, educational, and directly related to ${opts.specificSkill}.`;
 
@@ -97,32 +111,42 @@ Make all items age-appropriate, educational, and directly related to ${opts.spec
 
   try {
     const parsed = JSON.parse(content);
-    const lines: string[] = [];
-    if (parsed.title) lines.push(parsed.title);
-    if (parsed.instructions) lines.push(`Instructions: ${parsed.instructions}`);
-    if (Array.isArray(parsed.items)) {
-      lines.push(...parsed.items.slice(0, 6));
-    }
-    return lines;
+    return {
+      title: parsed.title || `${opts.specificSkill} Practice`,
+      instructions: parsed.instructions || `Complete each ${activityType} activity below.`,
+      items: Array.isArray(parsed.items) ? parsed.items.slice(0, 8) : [],
+      activityType,
+    };
   } catch {
-    // Fallback content if GPT response can't be parsed
-    return [
-      `${opts.subject}: ${opts.specificSkill}`,
-      `Practice your ${opts.specificSkill} skills below:`,
-      `1. ___________________________________________`,
-      `2. ___________________________________________`,
-      `3. ___________________________________________`,
-      `4. ___________________________________________`,
-      `5. ___________________________________________`,
-      `6. ___________________________________________`,
-    ];
+    return {
+      title: `${opts.subject}: ${opts.specificSkill}`,
+      instructions: `Practice your ${opts.specificSkill} skills below:`,
+      items: Array.from({ length: 6 }, (_, i) => `${i + 1}. ___________________________________________`),
+      activityType,
+    };
   }
 }
 
 async function generateWorksheetPage(pageIndex: number, job: GenerationJob): Promise<PageResult> {
   const opts = job.options as WorksheetOptions;
 
-  // Step 1: Generate decorative border/theme illustration with blank center
+  if (pageIndex === 0) {
+    // Cover page
+    const prompt = buildImagePrompt({
+      subject: `colorful educational workbook cover with ${opts.subject.toLowerCase()} themed elements and decorative patterns`,
+      theme: opts.theme,
+      additionalDetails: `professional educational worksheet cover design, vibrant and appealing for ${opts.gradeLevel} students, child-friendly`,
+    });
+    const { imageUrl } = await generatePageImage(prompt);
+    return {
+      pageNumber: 1,
+      imageUrl,
+      status: "success",
+      metadata: { isCover: true },
+    };
+  }
+
+  // Activity pages
   const prompt = buildImagePrompt({
     subject: `decorative page border and frame design for a ${opts.subject} ${opts.specificSkill} worksheet`,
     theme: opts.theme,
@@ -130,19 +154,19 @@ async function generateWorksheetPage(pageIndex: number, job: GenerationJob): Pro
   });
   const { imageUrl } = await generatePageImage(prompt);
 
-  // Step 2: Generate GPT educational content for this page
-  const contentLines = await generateWorksheetContent(opts, pageIndex);
+  // Generate GPT educational content
+  const worksheetContent = await generateWorksheetContent(opts, pageIndex - 1);
 
   return {
     pageNumber: pageIndex + 1,
     imageUrl,
     status: "success",
-    metadata: { contentLines },
+    metadata: { worksheetContent },
   };
 }
 
 /**
- * Custom chunk processor for worksheets that handles content overlay in PDF assembly.
+ * Custom chunk processor for worksheets.
  */
 async function processWorksheetChunkInternal(job: GenerationJob): Promise<void> {
   const PAGES_PER_CHUNK = 3;
@@ -174,7 +198,6 @@ async function processWorksheetChunkInternal(job: GenerationJob): Promise<void> 
     }
   }
 
-  // Check if all pages are done
   const updatedJob = getJob(job.id);
   if (updatedJob && updatedJob.nextPageIndex >= updatedJob.totalPages) {
     await finalizeWorksheetPdf(updatedJob);
@@ -182,43 +205,87 @@ async function processWorksheetChunkInternal(job: GenerationJob): Promise<void> 
 }
 
 /**
- * Assemble the worksheet PDF with GPT content text overlaid on the border images.
+ * Assemble the worksheet PDF with content text overlaid on border images.
  */
 async function finalizeWorksheetPdf(job: GenerationJob): Promise<void> {
   updateJob(job.id, { statusMessage: "Assembling PDF with content..." });
 
   const successPages = job.pageResults.filter(r => r.status === "success");
-
   if (successPages.length === 0) {
-    updateJob(job.id, {
-      status: "error",
-      errorMessage: "No pages were generated successfully.",
-    });
+    updateJob(job.id, { status: "error", errorMessage: "No pages were generated successfully." });
     return;
   }
 
   try {
-    const PAGE_WIDTH = 612;
+    const opts = job.options as WorksheetOptions;
     const MARGIN = 50;
-    const CONTENT_TOP = 130;    // Start content below top border decoration
+    const CONTENT_TOP = 130;
     const CONTENT_LEFT = MARGIN + 20;
     const CONTENT_WIDTH = PAGE_WIDTH - 2 * MARGIN - 40;
-    const LINE_HEIGHT = 52;     // Space between worksheet items
+    const LINE_HEIGHT = 48;
 
     const pageContents: PageContent[] = [];
 
     for (const page of successPages) {
       const buffer = await fetchImageBuffer(page.imageUrl);
-      const contentLines: string[] = page.metadata?.contentLines || [];
 
-      // Build content blocks for text overlay
-      const contentBlocks: NonNullable<PageContent["contentBlocks"]> = [];
+      if (page.metadata?.isCover) {
+        // Cover page
+        pageContents.push({
+          imageBuffer: buffer,
+          contentBlocks: [
+            {
+              text: `${opts.subject}`,
+              x: 50,
+              y: 250,
+              width: PAGE_WIDTH - 100,
+              fontSize: 32,
+              font: "bold",
+              align: "center",
+              color: "#FFFFFF",
+            },
+            {
+              text: opts.specificSkill,
+              x: 50,
+              y: 300,
+              width: PAGE_WIDTH - 100,
+              fontSize: 20,
+              font: "normal",
+              align: "center",
+              color: "#FFFFFF",
+            },
+            {
+              text: `Grade: ${opts.gradeLevel}`,
+              x: 50,
+              y: 340,
+              width: PAGE_WIDTH - 100,
+              fontSize: 14,
+              font: "normal",
+              align: "center",
+              color: "#FFFFFF",
+            },
+            {
+              text: "Worksheets",
+              x: 50,
+              y: 380,
+              width: PAGE_WIDTH - 100,
+              fontSize: 16,
+              font: "bold",
+              align: "center",
+              color: "#FFFFFF",
+            },
+          ],
+          pageNumber: 1,
+          totalPages: job.totalPages,
+        });
+      } else {
+        // Activity page with content overlay
+        const wc = page.metadata?.worksheetContent || {};
+        const contentBlocks: NonNullable<PageContent["contentBlocks"]> = [];
 
-      if (contentLines.length > 0) {
-        // Title (first line) — bold, centered
-        const title = contentLines[0] || "";
+        // Title
         contentBlocks.push({
-          text: title,
+          text: wc.title || "Practice",
           x: CONTENT_LEFT,
           y: CONTENT_TOP,
           width: CONTENT_WIDTH,
@@ -228,12 +295,24 @@ async function finalizeWorksheetPdf(job: GenerationJob): Promise<void> {
           color: "#1a1a1a",
         });
 
-        // Instructions (second line) — italic-style, centered
-        if (contentLines[1]) {
+        // Activity type badge
+        contentBlocks.push({
+          text: `Activity: ${wc.activityType || "practice"}`,
+          x: CONTENT_LEFT,
+          y: CONTENT_TOP + 28,
+          width: CONTENT_WIDTH,
+          fontSize: 9,
+          font: "normal",
+          align: "center",
+          color: "#888888",
+        });
+
+        // Instructions
+        if (wc.instructions) {
           contentBlocks.push({
-            text: contentLines[1],
+            text: wc.instructions,
             x: CONTENT_LEFT,
-            y: CONTENT_TOP + 36,
+            y: CONTENT_TOP + 50,
             width: CONTENT_WIDTH,
             fontSize: 11,
             font: "normal",
@@ -242,29 +321,29 @@ async function finalizeWorksheetPdf(job: GenerationJob): Promise<void> {
           });
         }
 
-        // Activity items (lines 2+) — left-aligned with spacing
-        const items = contentLines.slice(2);
-        items.forEach((item, idx) => {
-          const yPos = CONTENT_TOP + 85 + idx * LINE_HEIGHT;
+        // Activity items
+        const items: string[] = wc.items || [];
+        items.forEach((item: string, idx: number) => {
+          const yPos = CONTENT_TOP + 90 + idx * LINE_HEIGHT;
           contentBlocks.push({
             text: item,
             x: CONTENT_LEFT,
             y: yPos,
             width: CONTENT_WIDTH,
-            fontSize: 13,
+            fontSize: 12,
             font: "normal",
             align: "left",
             color: "#222222",
           });
         });
-      }
 
-      pageContents.push({
-        imageBuffer: buffer,
-        contentBlocks,
-        pageNumber: page.pageNumber,
-        totalPages: job.totalPages,
-      });
+        pageContents.push({
+          imageBuffer: buffer,
+          contentBlocks,
+          pageNumber: page.pageNumber,
+          totalPages: job.totalPages,
+        });
+      }
     }
 
     const pdfBuffer = await assemblePdf(pageContents);
@@ -285,17 +364,16 @@ async function finalizeWorksheetPdf(job: GenerationJob): Promise<void> {
     });
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : "PDF assembly failed";
-    updateJob(job.id, {
-      status: "error",
-      errorMessage: errorMsg,
-    });
+    updateJob(job.id, { status: "error", errorMessage: errorMsg });
   }
 }
 
 export function createWorksheetJob(options: WorksheetOptions): string {
+  // Ensure minimum 5 pages (cover + 4 activity pages)
+  const totalPages = Math.max(5, options.quantity + 1); // +1 for cover
   const job = createJob(
     "worksheet",
-    options.quantity,
+    totalPages,
     options,
     `worksheet-${options.subject.toLowerCase()}-${options.specificSkill.toLowerCase().replace(/\s+/g, "-")}.pdf`
   );

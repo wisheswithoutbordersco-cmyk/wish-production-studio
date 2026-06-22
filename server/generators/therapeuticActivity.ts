@@ -2,9 +2,18 @@
  * Therapeutic Activity Generator
  * Generates neurodivergent-friendly activities, sensory worksheets, emotional regulation tools,
  * visual schedules, calm-down kits, etc.
+ *
+ * Features:
+ * - Cover page with title and branding
+ * - "How to Use This Resource" intro page
+ * - Each page has text overlay: activity name, target age range, materials needed, 3-5 step instructions
+ * - Layout: contentBlocks for title at top, illustration in middle, instructions at bottom
+ * - Minimum 5+ pages
  */
-import { buildImagePrompt, generatePageImage, processChunk } from "./shared";
-import { createJob, getJob, type GenerationJob, type PageResult } from "../jobs";
+import { buildImagePrompt, generatePageImage, generateContent } from "./shared";
+import { createJob, getJob, updateJob, addPageResult, type GenerationJob, type PageResult } from "../jobs";
+import { assemblePdf, fetchImageBuffer, PageContent } from "../pdfAssembly";
+import { storagePut } from "../storage";
 
 export interface TherapeuticActivityOptions {
   activityType: string;
@@ -13,6 +22,9 @@ export interface TherapeuticActivityOptions {
   ageRange: string;
   pageCount: number;
 }
+
+const PAGE_WIDTH = 612;
+const PAGE_HEIGHT = 792;
 
 const ACTIVITY_PROMPTS: Record<string, string[]> = {
   "Visual Schedule": [
@@ -23,53 +35,53 @@ const ACTIVITY_PROMPTS: Record<string, string[]> = {
     "weekend activity visual schedule with illustrated choices and time blocks",
   ],
   "Calm-Down Kit": [
-    "calm-down strategy card with illustrated breathing exercise showing a child doing deep breaths, soothing muted colors",
+    "calm-down strategy illustration showing a child doing deep breathing exercises, soothing muted colors",
     "sensory grounding activity illustration showing 5-4-3-2-1 senses technique with calming imagery",
     "progressive muscle relaxation guide with illustrated body positions, gentle pastel tones",
-    "calm-down corner setup guide with illustrated cozy safe space elements",
+    "calm-down corner setup illustration with cozy safe space elements",
     "emotional thermometer illustration showing escalating feelings with calming strategies at each level",
   ],
   "Sensory Activity": [
-    "sensory exploration activity page with illustrated tactile, visual, and auditory activities in organized sections",
-    "sensory diet checklist with illustrated sensory activities categorized by type (proprioceptive, vestibular, tactile)",
-    "sensory bin activity guide with illustrated themed sensory materials and tools",
-    "body awareness activity page with illustrated exercises for spatial awareness and coordination",
-    "sensory break menu with illustrated quick sensory activities in a choice-board format",
+    "sensory exploration activity illustration with tactile, visual, and auditory activities in organized sections",
+    "sensory diet illustration with sensory activities categorized by type",
+    "sensory bin activity illustration with themed sensory materials and tools",
+    "body awareness activity illustration with exercises for spatial awareness",
+    "sensory break menu illustration with quick sensory activities in a choice-board format",
   ],
   "Emotional Regulation": [
-    "feelings identification page with illustrated diverse child faces showing different emotions in a grid",
-    "emotion zones chart with illustrated characters showing different emotional states with color coding",
-    "coping strategies wheel with illustrated calming techniques arranged in a circular format",
-    "feelings journal page with illustrated emotion faces and space for expression, gentle colors",
-    "anger management steps illustrated with a diverse child character going through calming stages",
+    "feelings identification illustration with diverse child faces showing different emotions in a grid",
+    "emotion zones illustration with characters showing different emotional states with color coding",
+    "coping strategies wheel illustration with calming techniques arranged in a circular format",
+    "feelings journal illustration with emotion faces and space for expression",
+    "anger management steps illustration with a child character going through calming stages",
   ],
   "Executive Function": [
-    "task breakdown template with illustrated steps showing how to break a big task into small pieces",
-    "planning and organization page with illustrated checklist format and priority markers",
-    "time management visual aid with illustrated clock and activity blocks",
-    "working memory game page with illustrated memory matching activity",
-    "flexible thinking activity with illustrated problem-solving scenarios",
+    "task breakdown template illustration showing how to break a big task into small pieces",
+    "planning and organization illustration with checklist format and priority markers",
+    "time management visual aid illustration with clock and activity blocks",
+    "working memory game illustration with memory matching activity",
+    "flexible thinking activity illustration with problem-solving scenarios",
   ],
   "Social Stories": [
-    "social story page with illustrated diverse children in a social situation, clear sequential panels",
-    "friendship skills illustrated scenario showing positive social interaction between diverse children",
-    "taking turns illustrated social story with diverse characters in a clear step-by-step format",
-    "asking for help illustrated social story with a diverse child character in school setting",
-    "managing frustration illustrated social story with calming strategies shown step by step",
+    "social story illustration with diverse children in a social situation, clear sequential panels",
+    "friendship skills illustrated scenario showing positive social interaction",
+    "taking turns illustrated social story with diverse characters",
+    "asking for help illustrated social story with a child in school setting",
+    "managing frustration illustrated social story with calming strategies",
   ],
   "Fidget Alternatives": [
-    "fidget alternatives menu with illustrated quiet hand activities for focus, organized in a grid",
-    "desk fidget options illustrated guide showing appropriate classroom movement alternatives",
-    "quiet body strategies illustrated page with diverse child showing calm body positions",
-    "focus tools illustrated guide with various tactile and movement options for attention",
-    "movement break cards with illustrated quick exercises for refocusing energy",
+    "fidget alternatives illustration with quiet hand activities for focus, organized in a grid",
+    "desk fidget options illustration showing appropriate classroom movement alternatives",
+    "quiet body strategies illustration with child showing calm body positions",
+    "focus tools illustration with various tactile and movement options",
+    "movement break illustration with quick exercises for refocusing energy",
   ],
   "Routine Cards": [
-    "daily routine cards set with illustrated individual activity icons, clear and simple design",
-    "transition cards with illustrated timer and next-activity previews, calming colors",
-    "choice board with illustrated activity options in a grid format, diverse characters",
-    "first-then board template with illustrated sequential activity cards",
-    "reward chart with illustrated goals and progress tracking, motivating design",
+    "daily routine cards illustration with individual activity icons, clear and simple design",
+    "transition cards illustration with timer and next-activity previews",
+    "choice board illustration with activity options in a grid format",
+    "first-then board template illustration with sequential activity cards",
+    "reward chart illustration with goals and progress tracking",
   ],
 };
 
@@ -97,32 +109,447 @@ function getTargetModifier(target: string): string {
   return modifiers[target] || modifiers["General Self-Regulation"];
 }
 
+/**
+ * Generate structured therapeutic activity content using GPT.
+ */
+async function generateTherapeuticContent(opts: TherapeuticActivityOptions, activityIndex: number): Promise<{
+  activityName: string;
+  targetInfo: string;
+  materials: string[];
+  steps: string[];
+  tip: string;
+}> {
+  const activityPrompts = ACTIVITY_PROMPTS[opts.activityType] || ACTIVITY_PROMPTS["Visual Schedule"];
+  const theme = activityPrompts[activityIndex % activityPrompts.length];
+
+  const systemPrompt = `You are a pediatric occupational therapist and special education expert creating therapeutic activities.
+Target population: ${opts.target}
+Age range: ${opts.ageRange}
+Activity type: ${opts.activityType}
+All activities must be evidence-based, safe, and developmentally appropriate.`;
+
+  const userPrompt = `Create a structured therapeutic activity related to: ${theme}
+For: ${opts.target}, ages ${opts.ageRange}
+
+Return a JSON object:
+{
+  "activityName": "Short clear activity title",
+  "targetInfo": "Who benefits: brief description of target skills",
+  "materials": ["material 1", "material 2", "material 3"],
+  "steps": ["Step 1: Clear instruction", "Step 2: ...", "Step 3: ...", "Step 4: ...", "Step 5: ..."],
+  "tip": "One professional tip for parents/educators using this activity"
+}
+
+Keep steps simple, clear, and achievable. Materials should be common household items.`;
+
+  const content = await generateContent({
+    systemPrompt,
+    userPrompt,
+    responseFormat: { type: "json_object" },
+  });
+
+  try {
+    const parsed = JSON.parse(content);
+    return {
+      activityName: parsed.activityName || "Therapeutic Activity",
+      targetInfo: parsed.targetInfo || `For ${opts.target}, ages ${opts.ageRange}`,
+      materials: Array.isArray(parsed.materials) ? parsed.materials.slice(0, 4) : ["Paper", "Crayons", "Timer"],
+      steps: Array.isArray(parsed.steps) ? parsed.steps.slice(0, 5) : ["Begin the activity", "Follow along", "Complete and reflect"],
+      tip: parsed.tip || "Adapt this activity to your child's comfort level.",
+    };
+  } catch {
+    return {
+      activityName: "Therapeutic Activity",
+      targetInfo: `For ${opts.target}, ages ${opts.ageRange}`,
+      materials: ["Paper", "Crayons", "Timer"],
+      steps: ["Set up a calm environment", "Introduce the activity", "Guide through each step", "Allow processing time", "Celebrate completion"],
+      tip: "Always follow the child's lead and comfort level.",
+    };
+  }
+}
+
+/**
+ * Generate "How to Use This Resource" content.
+ */
+async function generateHowToUse(opts: TherapeuticActivityOptions): Promise<string[]> {
+  const systemPrompt = `You are a pediatric therapist writing a brief guide for parents and educators.`;
+  const userPrompt = `Write 5 brief "How to Use This Resource" tips for a ${opts.activityType} resource designed for ${opts.target} (ages ${opts.ageRange}).
+
+Return JSON: {"tips": ["tip 1", "tip 2", "tip 3", "tip 4", "tip 5"]}
+
+Keep each tip to 1-2 sentences. Focus on practical implementation advice.`;
+
+  const content = await generateContent({
+    systemPrompt,
+    userPrompt,
+    responseFormat: { type: "json_object" },
+  });
+
+  try {
+    const parsed = JSON.parse(content);
+    return parsed.tips || [
+      "Use in a calm, quiet environment free from distractions.",
+      "Follow your child's pace — there is no rush.",
+      "Offer choices whenever possible to build autonomy.",
+      "Celebrate effort, not just completion.",
+      "Repeat activities as needed — repetition builds confidence.",
+    ];
+  } catch {
+    return [
+      "Use in a calm, quiet environment free from distractions.",
+      "Follow your child's pace — there is no rush.",
+      "Offer choices whenever possible to build autonomy.",
+      "Celebrate effort, not just completion.",
+      "Repeat activities as needed — repetition builds confidence.",
+    ];
+  }
+}
+
 async function generateTherapeuticPage(pageIndex: number, job: GenerationJob): Promise<PageResult> {
   const opts = job.options as TherapeuticActivityOptions;
-  const activityPrompt = getActivityPrompt(opts.activityType, pageIndex);
   const repPrompt = getRepresentationPrompt(opts.representation);
   const targetMod = getTargetModifier(opts.target);
 
+  if (pageIndex === 0) {
+    // Cover page
+    const prompt = buildImagePrompt({
+      subject: `calming therapeutic resource cover design with gentle nature elements and soothing patterns, ${repPrompt}`,
+      ageRange: opts.ageRange,
+      colorPalette: "muted soothing pastel colors, calming tones",
+      additionalDetails: `${targetMod}, therapeutic educational material cover, gentle and supportive visual design, professional and inviting`,
+    });
+    const { imageUrl } = await generatePageImage(prompt);
+    return { pageNumber: 1, imageUrl, status: "success", metadata: { isCover: true } };
+  }
+
+  if (pageIndex === 1) {
+    // "How to Use This Resource" page
+    const prompt = buildImagePrompt({
+      subject: `gentle calming decorative border with soft nature elements around edges, large plain white center area`,
+      colorPalette: "muted soothing pastel colors, calming tones",
+      additionalDetails: `therapeutic resource page border, the center 80% must be plain white for text, gentle and supportive design`,
+    });
+    const { imageUrl } = await generatePageImage(prompt);
+    const howToUse = await generateHowToUse(opts);
+    return { pageNumber: 2, imageUrl, status: "success", metadata: { isHowToUse: true, howToUse } };
+  }
+
+  // Activity pages
+  const activityPrompt = getActivityPrompt(opts.activityType, pageIndex - 2);
   const prompt = buildImagePrompt({
     subject: `${activityPrompt}, ${repPrompt}`,
     ageRange: opts.ageRange,
     colorPalette: "muted soothing pastel colors, calming tones",
-    additionalDetails: `${targetMod}, therapeutic educational material, gentle and supportive visual design`,
+    additionalDetails: `${targetMod}, therapeutic educational material, gentle and supportive visual design, soft colors to allow text overlay readability`,
   });
-
   const { imageUrl } = await generatePageImage(prompt);
+
+  // Generate structured activity content
+  const activityContent = await generateTherapeuticContent(opts, pageIndex - 2);
 
   return {
     pageNumber: pageIndex + 1,
     imageUrl,
     status: "success",
+    metadata: { activityContent },
   };
 }
 
+/**
+ * Custom chunk processor for therapeutic activities.
+ */
+async function processTherapeuticChunkInternal(job: GenerationJob): Promise<void> {
+  const PAGES_PER_CHUNK = 3;
+  const startIndex = job.nextPageIndex;
+  const endIndex = Math.min(startIndex + PAGES_PER_CHUNK, job.totalPages);
+
+  updateJob(job.id, {
+    status: "generating",
+    statusMessage: `Generating therapeutic activities ${startIndex + 1}-${endIndex} of ${job.totalPages}...`,
+  });
+
+  for (let i = startIndex; i < endIndex; i++) {
+    try {
+      const result = await generateTherapeuticPage(i, job);
+      addPageResult(job.id, result);
+      updateJob(job.id, {
+        nextPageIndex: i + 1,
+        statusMessage: `Generated page ${i + 1} of ${job.totalPages}`,
+      });
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : "Unknown error";
+      addPageResult(job.id, {
+        pageNumber: i + 1,
+        imageUrl: "",
+        status: "error",
+        error: errorMsg,
+      });
+      updateJob(job.id, { nextPageIndex: i + 1 });
+    }
+  }
+
+  const updatedJob = getJob(job.id);
+  if (updatedJob && updatedJob.nextPageIndex >= updatedJob.totalPages) {
+    await finalizeTherapeuticPdf(updatedJob);
+  }
+}
+
+/**
+ * Assemble the therapeutic activity PDF with structured content overlays.
+ */
+async function finalizeTherapeuticPdf(job: GenerationJob): Promise<void> {
+  updateJob(job.id, { statusMessage: "Assembling therapeutic activity PDF..." });
+
+  const successPages = job.pageResults.filter(r => r.status === "success");
+  if (successPages.length === 0) {
+    updateJob(job.id, { status: "error", errorMessage: "No pages were generated successfully." });
+    return;
+  }
+
+  try {
+    const opts = job.options as TherapeuticActivityOptions;
+    const pageContents: PageContent[] = [];
+
+    for (const page of successPages) {
+      const buffer = await fetchImageBuffer(page.imageUrl);
+
+      if (page.metadata?.isCover) {
+        // Cover page
+        pageContents.push({
+          imageBuffer: buffer,
+          contentBlocks: [
+            {
+              text: opts.activityType,
+              x: 50,
+              y: 250,
+              width: PAGE_WIDTH - 100,
+              fontSize: 26,
+              font: "bold",
+              align: "center",
+              color: "#FFFFFF",
+            },
+            {
+              text: `For: ${opts.target}`,
+              x: 50,
+              y: 295,
+              width: PAGE_WIDTH - 100,
+              fontSize: 14,
+              font: "normal",
+              align: "center",
+              color: "#FFFFFF",
+            },
+            {
+              text: `Ages: ${opts.ageRange}`,
+              x: 50,
+              y: 320,
+              width: PAGE_WIDTH - 100,
+              fontSize: 12,
+              font: "normal",
+              align: "center",
+              color: "#FFFFFF",
+            },
+            {
+              text: "Therapeutic Activities Resource",
+              x: 50,
+              y: 700,
+              width: PAGE_WIDTH - 100,
+              fontSize: 11,
+              font: "normal",
+              align: "center",
+              color: "#FFFFFF",
+            },
+          ],
+          pageNumber: 1,
+          totalPages: job.totalPages,
+        });
+      } else if (page.metadata?.isHowToUse) {
+        // How to Use page
+        const tips: string[] = page.metadata.howToUse || [];
+        const contentBlocks: NonNullable<PageContent["contentBlocks"]> = [
+          {
+            text: "How to Use This Resource",
+            x: 60,
+            y: 100,
+            width: PAGE_WIDTH - 120,
+            fontSize: 22,
+            font: "bold",
+            align: "center",
+            color: "#2c3e50",
+          },
+          {
+            text: `Designed for: ${opts.target} \u2022 Ages: ${opts.ageRange}`,
+            x: 60,
+            y: 135,
+            width: PAGE_WIDTH - 120,
+            fontSize: 11,
+            font: "normal",
+            align: "center",
+            color: "#555555",
+          },
+        ];
+
+        tips.forEach((tip, idx) => {
+          contentBlocks.push({
+            text: `\u2713 ${tip}`,
+            x: 80,
+            y: 190 + idx * 55,
+            width: PAGE_WIDTH - 160,
+            fontSize: 12,
+            font: "normal",
+            align: "left",
+            color: "#333333",
+          });
+        });
+
+        contentBlocks.push({
+          text: "Remember: Every child is unique. Adapt activities to individual needs and comfort levels.",
+          x: 60,
+          y: 620,
+          width: PAGE_WIDTH - 120,
+          fontSize: 10,
+          font: "normal",
+          align: "center",
+          color: "#666666",
+        });
+
+        pageContents.push({
+          imageBuffer: buffer,
+          contentBlocks,
+          pageNumber: page.pageNumber,
+          totalPages: job.totalPages,
+        });
+      } else {
+        // Activity page with structured overlay
+        const ac = page.metadata?.activityContent || {};
+        const contentBlocks: NonNullable<PageContent["contentBlocks"]> = [];
+
+        // Activity title at top
+        contentBlocks.push({
+          text: ac.activityName || "Activity",
+          x: 40,
+          y: 35,
+          width: PAGE_WIDTH - 80,
+          fontSize: 18,
+          font: "bold",
+          align: "center",
+          color: "#2c3e50",
+        });
+
+        // Target info and age range
+        contentBlocks.push({
+          text: ac.targetInfo || "",
+          x: 50,
+          y: 62,
+          width: PAGE_WIDTH - 100,
+          fontSize: 9,
+          font: "normal",
+          align: "center",
+          color: "#666666",
+        });
+
+        // Materials section (top-right area)
+        const materials: string[] = ac.materials || [];
+        contentBlocks.push({
+          text: "Materials:",
+          x: 400,
+          y: 90,
+          width: 180,
+          fontSize: 10,
+          font: "bold",
+          align: "left",
+          color: "#2c3e50",
+        });
+        materials.forEach((mat: string, idx: number) => {
+          contentBlocks.push({
+            text: `\u2022 ${mat}`,
+            x: 410,
+            y: 106 + idx * 16,
+            width: 170,
+            fontSize: 9,
+            font: "normal",
+            align: "left",
+            color: "#444444",
+          });
+        });
+
+        // Steps section (bottom area)
+        const steps: string[] = ac.steps || [];
+        const stepsStartY = 550;
+        contentBlocks.push({
+          text: "Instructions:",
+          x: 50,
+          y: stepsStartY,
+          width: PAGE_WIDTH - 100,
+          fontSize: 12,
+          font: "bold",
+          align: "left",
+          color: "#2c3e50",
+        });
+
+        steps.forEach((step: string, idx: number) => {
+          contentBlocks.push({
+            text: step,
+            x: 60,
+            y: stepsStartY + 20 + idx * 28,
+            width: PAGE_WIDTH - 120,
+            fontSize: 10,
+            font: "normal",
+            align: "left",
+            color: "#333333",
+          });
+        });
+
+        // Professional tip at very bottom
+        if (ac.tip) {
+          contentBlocks.push({
+            text: `\u{1F4A1} Tip: ${ac.tip}`,
+            x: 50,
+            y: 730,
+            width: PAGE_WIDTH - 100,
+            fontSize: 8,
+            font: "normal",
+            align: "center",
+            color: "#777777",
+          });
+        }
+
+        pageContents.push({
+          imageBuffer: buffer,
+          contentBlocks,
+          pageNumber: page.pageNumber,
+          totalPages: job.totalPages,
+        });
+      }
+    }
+
+    const pdfBuffer = await assemblePdf(pageContents);
+
+    const { url: pdfUrl } = await storagePut(
+      `products/${job.generatorType}/${job.filename}`,
+      pdfBuffer,
+      "application/pdf"
+    );
+
+    const coverUrl = successPages[0]?.imageUrl || null;
+
+    updateJob(job.id, {
+      status: successPages.length === job.totalPages ? "complete" : "partial",
+      pdfUrl,
+      coverImageUrl: coverUrl,
+      statusMessage: "PDF ready for download!",
+    });
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : "PDF assembly failed";
+    updateJob(job.id, { status: "error", errorMessage: errorMsg });
+  }
+}
+
 export function createTherapeuticActivityJob(options: TherapeuticActivityOptions): string {
+  // Ensure minimum 5 pages (cover + how-to-use + 3 activity pages)
+  const totalPages = Math.max(5, options.pageCount + 2); // +2 for cover and how-to-use
   const job = createJob(
     "therapeutic-activity",
-    options.pageCount,
+    totalPages,
     options,
     `therapeutic-${options.activityType.toLowerCase().replace(/\s+/g, "-")}.pdf`
   );
@@ -132,5 +559,5 @@ export function createTherapeuticActivityJob(options: TherapeuticActivityOptions
 export async function processTherapeuticActivityChunk(jobId: string): Promise<void> {
   const job = getJob(jobId);
   if (!job) throw new Error("Job not found");
-  await processChunk(job, generateTherapeuticPage);
+  await processTherapeuticChunkInternal(job);
 }
