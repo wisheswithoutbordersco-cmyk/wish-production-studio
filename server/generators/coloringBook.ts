@@ -177,7 +177,15 @@ function getAgeModifier(ageRange: string): string {
 async function generateColoringPage(pageIndex: number, job: GenerationJob): Promise<PageResult> {
   const opts = job.options as ColoringBookOptions;
   const subjects = THEME_SUBJECTS[opts.theme] || THEME_SUBJECTS["Animals"];
-  const subject = subjects[pageIndex % subjects.length];
+  // Use a unique subject per page — cycle through the full list without repeating
+  // If more pages than subjects, append page index to force a unique scene
+  const subjectIndex = pageIndex % subjects.length;
+  const baseSubject = subjects[subjectIndex];
+  // For pages beyond the subject list length, add a scene variation to avoid repeats
+  const sceneVariation = pageIndex >= subjects.length
+    ? ` (scene variation ${Math.floor(pageIndex / subjects.length) + 1}, different composition and background)`
+    : "";
+  const subject = `${baseSubject}${sceneVariation}`;
 
   const detailPrompt = getDetailLevelPrompt(opts.detailLevel);
   const ageModifier = getAgeModifier(opts.ageRange);
@@ -187,10 +195,11 @@ async function generateColoringPage(pageIndex: number, job: GenerationJob): Prom
     `black and white coloring page of ${subject}`,
     detailPrompt,
     ageModifier,
+    "Every page must be dense and detailed, filling the entire page edge-to-edge with no large empty white areas. Minimum complexity: 50+ distinct elements per page. Each page in the book must be a DIFFERENT scene — no repeated subjects",
     "clean black outlines on pure white background",
     "no shading, no gradients, no gray tones, no color",
     "professional coloring book quality line art",
-    "filling the entire canvas edge-to-edge",
+    "filling the entire canvas edge-to-edge with no blank white space",
     "absolutely no words, letters, numbers, or written text anywhere in the image",
   ].join(", ");
 

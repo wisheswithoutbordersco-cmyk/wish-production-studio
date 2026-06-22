@@ -18,7 +18,7 @@ const ACTIVITY_PROMPTS: Record<string, string[]> = {
   "Bilateral Coordination": [
     "symmetrical mirror drawing activity with a dotted center line, showing half of a pattern on one side for the child to mirror on the other side",
     "bilateral tracing paths that curve symmetrically on both sides of the page, with start and end points marked by dots",
-    "symmetrical maze with identical paths on left and right sides that must be traced simultaneously",
+    "symmetrical maze with identical wide-open paths on left and right sides that must be traced simultaneously — maze grid takes up 80% of the page, paths clearly traceable from START to FINISH with no overlapping decorative elements blocking the routes",
     "mirror image completion activity showing half of an illustrated object with guide dots for completing the other half",
     "cross-midline tracing activity with flowing curved paths that cross from left to right side of the page",
   ],
@@ -32,7 +32,7 @@ const ACTIVITY_PROMPTS: Record<string, string[]> = {
   "Fine Motor": [
     "cutting practice lines with varying difficulty - straight, wavy, and zigzag paths between illustrated borders",
     "bead path tracing activity with dotted curved lines connecting illustrated beads in a pattern",
-    "maze tracing activity with narrow paths requiring precise pencil control, decorated with themed illustrations",
+    "maze tracing activity where the maze grid takes up 80% of the page — the maze path must be clearly traceable from START to FINISH with one correct solution, paths wide and unobstructed, all decorative themed illustrations placed only around the outer border of the page and never overlapping the maze paths",
     "dot-to-dot connection activity with numbered dots forming a themed illustration when connected",
     "lacing card template with evenly spaced holes around a themed illustration border for threading practice",
   ],
@@ -63,12 +63,18 @@ async function generateBrainTrainingPage(pageIndex: number, job: GenerationJob):
   const activityPrompt = getActivityPrompt(opts.activityType, pageIndex);
   const difficultyMod = getDifficultyModifier(opts.difficulty, pageIndex, job.totalPages);
 
+  // Determine if this is a maze page and add explicit maze constraints
+  const isMaze = activityPrompt.toLowerCase().includes("maze");
+  const mazeConstraint = isMaze
+    ? " The maze path must be clearly traceable from START to FINISH with one correct solution. Keep paths wide and unobstructed. Dinosaurs and decorative elements go AROUND the maze borders, not overlapping the paths. The maze grid must be the primary element taking up 80% of the page."
+    : "";
+
   const prompt = buildImagePrompt({
     subject: `${activityPrompt}, ${difficultyMod}`,
     theme: opts.theme,
     culturalVariant: opts.culturalVariant,
     ageRange: opts.ageRange,
-    additionalDetails: "black and white line art worksheet design with clear activity paths, no shading, high contrast for printing",
+    additionalDetails: `black and white line art worksheet design with clear activity paths, no shading, high contrast for printing${mazeConstraint}`,
   });
 
   const { imageUrl } = await generatePageImage(prompt);

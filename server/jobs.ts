@@ -12,6 +12,8 @@ export interface PageResult {
   imageUrl: string;
   status: "success" | "error";
   error?: string;
+  // Optional metadata for generators that need to overlay content in PDF assembly
+  metadata?: Record<string, any>;
 }
 
 export interface GenerationJob {
