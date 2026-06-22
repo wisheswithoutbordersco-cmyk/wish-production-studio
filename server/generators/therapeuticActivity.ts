@@ -259,7 +259,7 @@ async function generateTherapeuticPage(pageIndex: number, job: GenerationJob): P
  * Custom chunk processor for therapeutic activities.
  */
 async function processTherapeuticChunkInternal(job: GenerationJob): Promise<void> {
-  const PAGES_PER_CHUNK = 3;
+  const PAGES_PER_CHUNK = 2;
   const startIndex = job.nextPageIndex;
   const endIndex = Math.min(startIndex + PAGES_PER_CHUNK, job.totalPages);
 

@@ -11,7 +11,7 @@ import { assemblePdf, fetchImageBuffer, PageContent } from "../pdfAssembly";
 import { createJob, getJob, updateJob, addPageResult, type GenerationJob, type PageResult } from "../jobs";
 
 // Pages to generate per poll request (chunked pattern)
-export const PAGES_PER_CHUNK = 3;
+export const PAGES_PER_CHUNK = 2;
 
 /**
  * Builds an image prompt that enforces:

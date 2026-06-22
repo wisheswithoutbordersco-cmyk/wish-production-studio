@@ -184,7 +184,7 @@ async function generateCulturalGamePage(pageIndex: number, job: GenerationJob): 
  * Custom chunk processor.
  */
 async function processCulturalGameChunkInternal(job: GenerationJob): Promise<void> {
-  const PAGES_PER_CHUNK = 3;
+  const PAGES_PER_CHUNK = 2;
   const startIndex = job.nextPageIndex;
   const endIndex = Math.min(startIndex + PAGES_PER_CHUNK, job.totalPages);
 

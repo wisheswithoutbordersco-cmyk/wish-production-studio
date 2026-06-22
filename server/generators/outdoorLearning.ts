@@ -189,7 +189,7 @@ async function generateOutdoorPage(pageIndex: number, job: GenerationJob): Promi
  * Custom chunk processor for outdoor learning.
  */
 async function processOutdoorLearningChunkInternal(job: GenerationJob): Promise<void> {
-  const PAGES_PER_CHUNK = 3;
+  const PAGES_PER_CHUNK = 2;
   const startIndex = job.nextPageIndex;
   const endIndex = Math.min(startIndex + PAGES_PER_CHUNK, job.totalPages);
 
