@@ -95,6 +95,25 @@ const SUBJECT_PROMPTS: Record<string, string[]> = {
   ],
 };
 
+/**
+ * Removes raw AI placeholder text such as "[Picture of 5 children ...]" or
+ * "(insert image here)" from generated copy. The PDF requires that no raw
+ * placeholder text ever reaches the page; activities must be real text content.
+ */
+function scrubPlaceholders(input?: string): string {
+  if (!input || typeof input !== "string") return "";
+  let out = input;
+  // Remove [ ... ] placeholder brackets that describe an image.
+  out = out.replace(/\[[^\]]*\]/g, " ");
+  // Remove ( insert / picture / image ... ) style placeholders.
+  out = out.replace(/\((?:[^)]*?(?:insert|picture|image|illustration|photo)[^)]*?)\)/gi, " ");
+  // Remove leading "Picture of ..."/"Image of ..." fragments.
+  out = out.replace(/\b(?:picture|image|illustration|photo)\s+of\b[^.,;:\n]*/gi, " ");
+  // Collapse whitespace left behind.
+  out = out.replace(/\s{2,}/g, " ").trim();
+  return out;
+}
+
 function getThemeModifier(theme: string): string {
   const modifiers: Record<string, string> = {
     "Multicultural Kids": "featuring diverse multicultural children of various ethnicities",
@@ -151,7 +170,12 @@ Return a JSON object:
 
 Make it unique from other pages. Include fill-in prompts, drawing prompts, matching, or reflection questions.
 For SEL/Emotions: include emotion identification, coping strategies, or social scenarios.
-For Math: include practice problems, word problems, or pattern activities.`;
+For Math: include practice problems, word problems, or pattern activities.
+
+CRITICAL RULES:
+- NEVER output placeholder text describing an image, e.g. do NOT write "[Picture of 5 children]", "(insert image here)", or "Image of ...".
+- Every activity item must be a complete, self-contained text activity the child can do with pencil and paper (questions, prompts, blanks, matching lines, or reflection).
+- Do not reference an illustration that the worksheet does not contain.`;
 
   const content = await generateContent({
     systemPrompt,
@@ -329,73 +353,108 @@ async function finalizeWorkbookPdf(job: GenerationJob): Promise<void> {
           totalPages: job.totalPages,
         });
       } else {
-        // Activity page with educational content
+        // Activity page with educational content.
+        // Every text element sits inside a solid/semi-transparent white panel so
+        // black text is always readable over the decorative background image.
         const ac = page.metadata?.activityContent || {};
         const contentBlocks: NonNullable<PageContent["contentBlocks"]> = [];
 
-        // Page title
+        const PANEL = "rgba(255,255,255,0.92)";
+        const PANEL_SOFT = "rgba(255,255,255,0.85)";
+        const LEFT = 45;
+        const PANEL_WIDTH = PAGE_WIDTH - LEFT * 2;
+
+        // Header panel: title + educational purpose grouped on one solid band.
         contentBlocks.push({
-          text: ac.pageTitle || "Activity",
-          x: 40,
-          y: 40,
-          width: PAGE_WIDTH - 80,
+          text: scrubPlaceholders(ac.pageTitle) || "Activity",
+          x: LEFT,
+          y: 44,
+          width: PANEL_WIDTH,
           fontSize: 18,
           font: "bold",
           align: "center",
-          color: "#1a1a1a",
+          fontColor: "#1a1a1a",
+          backgroundColor: PANEL,
+          padding: 10,
+          radius: 6,
         });
 
-        // Educational purpose badge
         contentBlocks.push({
-          text: `\u{1F4D6} ${ac.educationalPurpose || ""}`,
-          x: 50,
-          y: 70,
-          width: PAGE_WIDTH - 100,
+          text: `\u{1F4D6} ${scrubPlaceholders(ac.educationalPurpose) || ""}`,
+          x: LEFT + 8,
+          y: 82,
+          width: PANEL_WIDTH - 16,
           fontSize: 9,
           font: "normal",
           align: "center",
-          color: "#666666",
+          fontColor: "#555555",
+          backgroundColor: PANEL_SOFT,
+          padding: 6,
+          radius: 4,
         });
 
-        // Instructions
+        // Instructions panel.
         contentBlocks.push({
-          text: ac.instructions || "Complete the activity below.",
-          x: 50,
-          y: 100,
-          width: PAGE_WIDTH - 100,
+          text: scrubPlaceholders(ac.instructions) || "Complete the activity below.",
+          x: LEFT,
+          y: 116,
+          width: PANEL_WIDTH,
           fontSize: 11,
-          font: "normal",
+          font: "bold",
           align: "left",
-          color: "#333333",
+          fontColor: "#222222",
+          backgroundColor: PANEL,
+          padding: 8,
+          radius: 4,
         });
 
-        // Activity items
-        const items: string[] = ac.activityItems || [];
+        // Activity items spread across the full usable height so the lower half
+        // of the page is never left blank. Each item gets its own readable panel.
+        const rawItems: string[] = Array.isArray(ac.activityItems) ? ac.activityItems : [];
+        const items = rawItems
+          .map((it) => scrubPlaceholders(it))
+          .filter((it): it is string => !!it && it.trim().length > 0);
+        const ITEMS_TOP = 170;
+        const ITEMS_BOTTOM = PAGE_HEIGHT - 60; // leave room for footer/page number
+        const itemCount = Math.max(items.length, 1);
+        const slot = (ITEMS_BOTTOM - ITEMS_TOP) / itemCount;
         items.forEach((item: string, idx: number) => {
           contentBlocks.push({
             text: item,
-            x: 55,
-            y: 140 + idx * 50,
-            width: PAGE_WIDTH - 110,
+            x: LEFT,
+            y: ITEMS_TOP + idx * slot,
+            width: PANEL_WIDTH,
             fontSize: 12,
             font: "normal",
             align: "left",
-            color: "#222222",
+            fontColor: "#1a1a1a",
+            backgroundColor: PANEL,
+            padding: 8,
+            radius: 4,
           });
         });
 
-        // Labels (section markers)
+        // Labels (section markers) get small white chips for readability too.
         const labels: Array<{ text: string; x: number; y: number }> = ac.labels || [];
+        labels.forEach((l) => {
+          contentBlocks.push({
+            text: scrubPlaceholders(l.text) || "",
+            x: l.x,
+            y: l.y,
+            width: 160,
+            fontSize: 10,
+            font: "bold",
+            align: "left",
+            fontColor: "#222222",
+            backgroundColor: PANEL_SOFT,
+            padding: 4,
+            radius: 3,
+          });
+        });
 
         pageContents.push({
           imageBuffer: buffer,
           contentBlocks,
-          labels: labels.map((l: { text: string; x: number; y: number }) => ({
-            text: l.text,
-            x: l.x,
-            y: l.y,
-            fontSize: 10,
-          })),
           pageNumber: page.pageNumber,
           totalPages: job.totalPages,
         });

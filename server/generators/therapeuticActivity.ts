@@ -363,8 +363,10 @@ async function finalizeTherapeuticPdf(job: GenerationJob): Promise<void> {
           totalPages: job.totalPages,
         });
       } else if (page.metadata?.isHowToUse) {
-        // How to Use page
+        // How to Use page — grouped onto readable white panels.
         const tips: string[] = page.metadata.howToUse || [];
+        const PANEL = "rgba(255,255,255,0.92)";
+        const PANEL_SOFT = "rgba(255,255,255,0.85)";
         const contentBlocks: NonNullable<PageContent["contentBlocks"]> = [
           {
             text: "How to Use This Resource",
@@ -374,42 +376,56 @@ async function finalizeTherapeuticPdf(job: GenerationJob): Promise<void> {
             fontSize: 22,
             font: "bold",
             align: "center",
-            color: "#2c3e50",
+            fontColor: "#2c3e50",
+            backgroundColor: PANEL,
+            padding: 8,
+            radius: 6,
           },
           {
             text: `Designed for: ${opts.target} \u2022 Ages: ${opts.ageRange}`,
             x: 60,
-            y: 135,
+            y: 140,
             width: PAGE_WIDTH - 120,
             fontSize: 11,
             font: "normal",
             align: "center",
-            color: "#555555",
+            fontColor: "#555555",
+            backgroundColor: PANEL_SOFT,
+            padding: 5,
+            radius: 4,
           },
         ];
 
-        tips.forEach((tip, idx) => {
-          contentBlocks.push({
-            text: `\u2713 ${tip}`,
-            x: 80,
-            y: 190 + idx * 55,
-            width: PAGE_WIDTH - 160,
-            fontSize: 12,
-            font: "normal",
-            align: "left",
-            color: "#333333",
-          });
+        // All tips grouped in a single panel that fills the page body.
+        const tipsText = tips.length
+          ? tips.map((t) => `\u2713 ${t}`).join("\n\n")
+          : "\u2713 Adapt each activity to the child's needs.";
+        contentBlocks.push({
+          text: tipsText,
+          x: 70,
+          y: 185,
+          width: PAGE_WIDTH - 140,
+          fontSize: 12,
+          font: "normal",
+          align: "left",
+          fontColor: "#333333",
+          backgroundColor: PANEL,
+          padding: 12,
+          radius: 6,
         });
 
         contentBlocks.push({
           text: "Remember: Every child is unique. Adapt activities to individual needs and comfort levels.",
           x: 60,
-          y: 620,
+          y: 640,
           width: PAGE_WIDTH - 120,
           fontSize: 10,
           font: "normal",
           align: "center",
-          color: "#666666",
+          fontColor: "#555555",
+          backgroundColor: PANEL_SOFT,
+          padding: 6,
+          radius: 4,
         });
 
         pageContents.push({
@@ -419,84 +435,81 @@ async function finalizeTherapeuticPdf(job: GenerationJob): Promise<void> {
           totalPages: job.totalPages,
         });
       } else {
-        // Activity page with structured overlay
+        // Activity page with structured overlay. Each text group sits on a
+        // readable white/semi-transparent panel over the calming illustration.
         const ac = page.metadata?.activityContent || {};
         const contentBlocks: NonNullable<PageContent["contentBlocks"]> = [];
+        const PANEL = "rgba(255,255,255,0.92)";
+        const PANEL_SOFT = "rgba(255,255,255,0.85)";
 
         // Activity title at top
         contentBlocks.push({
           text: ac.activityName || "Activity",
-          x: 40,
-          y: 35,
-          width: PAGE_WIDTH - 80,
+          x: 45,
+          y: 36,
+          width: PAGE_WIDTH - 90,
           fontSize: 18,
           font: "bold",
           align: "center",
-          color: "#2c3e50",
+          fontColor: "#2c3e50",
+          backgroundColor: PANEL,
+          padding: 8,
+          radius: 6,
         });
 
         // Target info and age range
         contentBlocks.push({
           text: ac.targetInfo || "",
           x: 50,
-          y: 62,
+          y: 70,
           width: PAGE_WIDTH - 100,
           fontSize: 9,
           font: "normal",
           align: "center",
-          color: "#666666",
+          fontColor: "#555555",
+          backgroundColor: PANEL_SOFT,
+          padding: 4,
+          radius: 3,
         });
 
-        // Materials section (top-right area)
+        // Materials section grouped into one panel (top-right area).
         const materials: string[] = ac.materials || [];
+        const materialsText =
+          "Materials:\n" +
+          (materials.length ? materials.map((m) => `\u2022 ${m}`).join("\n") : "\u2022 None");
         contentBlocks.push({
-          text: "Materials:",
-          x: 400,
-          y: 90,
+          text: materialsText,
+          x: 390,
+          y: 110,
           width: 180,
-          fontSize: 10,
-          font: "bold",
+          fontSize: 9,
+          font: "normal",
           align: "left",
-          color: "#2c3e50",
-        });
-        materials.forEach((mat: string, idx: number) => {
-          contentBlocks.push({
-            text: `\u2022 ${mat}`,
-            x: 410,
-            y: 106 + idx * 16,
-            width: 170,
-            fontSize: 9,
-            font: "normal",
-            align: "left",
-            color: "#444444",
-          });
+          fontColor: "#2c3e50",
+          backgroundColor: PANEL,
+          padding: 8,
+          radius: 5,
         });
 
-        // Steps section (bottom area)
+        // Steps section grouped into one panel (bottom area).
         const steps: string[] = ac.steps || [];
-        const stepsStartY = 550;
+        const stepsText =
+          "Instructions:\n" +
+          (steps.length
+            ? steps.map((s, i) => `${i + 1}. ${s}`).join("\n")
+            : "1. Follow along at a comfortable pace.");
         contentBlocks.push({
-          text: "Instructions:",
+          text: stepsText,
           x: 50,
-          y: stepsStartY,
+          y: 540,
           width: PAGE_WIDTH - 100,
-          fontSize: 12,
-          font: "bold",
+          fontSize: 10,
+          font: "normal",
           align: "left",
-          color: "#2c3e50",
-        });
-
-        steps.forEach((step: string, idx: number) => {
-          contentBlocks.push({
-            text: step,
-            x: 60,
-            y: stepsStartY + 20 + idx * 28,
-            width: PAGE_WIDTH - 120,
-            fontSize: 10,
-            font: "normal",
-            align: "left",
-            color: "#333333",
-          });
+          fontColor: "#1a1a1a",
+          backgroundColor: PANEL,
+          padding: 10,
+          radius: 6,
         });
 
         // Professional tip at very bottom
@@ -504,12 +517,15 @@ async function finalizeTherapeuticPdf(job: GenerationJob): Promise<void> {
           contentBlocks.push({
             text: `\u{1F4A1} Tip: ${ac.tip}`,
             x: 50,
-            y: 730,
+            y: 735,
             width: PAGE_WIDTH - 100,
             fontSize: 8,
             font: "normal",
             align: "center",
-            color: "#777777",
+            fontColor: "#555555",
+            backgroundColor: PANEL_SOFT,
+            padding: 5,
+            radius: 3,
           });
         }
 

@@ -52,6 +52,63 @@ const STYLE_PROMPTS: Record<string, string> = {
   "Montessori-style": "clean minimalist realistic illustration on white background, Montessori educational style",
 };
 
+/**
+ * Builds a subject-aware image descriptor for a flashcard illustration.
+ * The goal (per the fix instructions) is that the picture matches the WORD
+ * being taught — e.g. "one cute cartoon apple" instead of "a bold number 1 on
+ * a blue background". For abstract subjects (numbers, letters, sight words) we
+ * depict a real object showing that quantity / concept rather than rendering
+ * the glyph itself (AI image text is unreliable; the glyph is already overlaid
+ * programmatically as the card label).
+ */
+function buildCardSubject(subject: string, item: string, stylePrompt: string): string {
+  const style = stylePrompt;
+
+  // Numbers: show that many identical cute objects to teach the quantity.
+  if (subject === "Numbers") {
+    const n = parseInt(item, 10);
+    if (!isNaN(n) && n >= 1 && n <= 20) {
+      const noun = n === 1 ? "one cute red apple" : `${n} cute identical red apples arranged in a clear group`;
+      return `${noun}, ${style}`;
+    }
+  }
+
+  // Alphabet: depict a friendly object whose name starts with that letter.
+  if (subject === "Alphabet") {
+    const letter = item.trim().toUpperCase();
+    const examples: Record<string, string> = {
+      A: "a red apple", B: "a yellow banana", C: "a cute cat", D: "a friendly dog",
+      E: "an elephant", F: "a colorful fish", G: "a bunch of green grapes", H: "a house",
+      I: "an ice cream cone", J: "a glass jar of jam", K: "a flying kite", L: "a yellow lemon",
+      M: "a round moon", N: "a bird nest with eggs", O: "an orange", P: "a green pear",
+      Q: "a cozy quilt", R: "a red rose", S: "a yellow sun", T: "a green tree",
+      U: "an open umbrella", V: "a small violin", W: "a slice of watermelon", X: "a xylophone",
+      Y: "a ball of yellow yarn", Z: "a striped zebra",
+    };
+    const obj = examples[letter] || "a friendly cartoon object";
+    return `${obj}, ${style}`;
+  }
+
+  // Sight words: depict a simple scene that illustrates the word in context.
+  if (subject === "Sight Words") {
+    return `a simple friendly illustration that helps a young child understand the word "${item}", ${style}`;
+  }
+
+  // Shapes: a clean single geometric shape as a tangible colored object.
+  if (subject === "Shapes") {
+    return `a single clear ${item.toLowerCase()} shape as a bright solid colored object, ${style}`;
+  }
+
+  // Colors: a recognizable everyday object in that color.
+  if (subject === "Colors") {
+    return `a single everyday object that is clearly the color ${item.toLowerCase()}, ${style}`;
+  }
+
+  // Default (Animals, Food, Body Parts, Emotions, Actions/Verbs, custom):
+  // depict the item itself.
+  return `a single clear illustration of "${item}", ${style}`;
+}
+
 function getItemsForPage(subject: string, pageIndex: number): string[] {
   const items = SUBJECT_ITEMS[subject] || SUBJECT_ITEMS["Animals"];
   const startIdx = pageIndex * CARDS_PER_PAGE;
@@ -108,12 +165,17 @@ async function generateFlashcardPage(pageIndex: number, job: GenerationJob): Pro
   // Step 1: Get bilingual translations
   const translations = await getTranslations(items, opts.languages);
 
-  // Step 2: Generate one illustration per card
+  // Step 2: Generate one illustration per card.
+  // The image must depict the ACTUAL thing being taught (e.g. a real apple for
+  // "Apple"), not a generic number/shape on a colored background. We build a
+  // subject-aware descriptor so each card illustration matches its word.
   const cardImages: string[] = [];
   for (const item of items) {
+    const subjectDescriptor = buildCardSubject(opts.subject, item, stylePrompt);
     const prompt = buildImagePrompt({
-      subject: `single clear illustration of "${item}" centered, ${stylePrompt}`,
-      additionalDetails: "clean isolated illustration on a plain light background, educational flashcard artwork, simple and recognizable",
+      subject: subjectDescriptor,
+      additionalDetails:
+        "single object centered, clean isolated illustration on a plain white background, educational flashcard artwork, simple, bright, and instantly recognizable to a young child",
     });
     const { buffer } = await generatePageImage(prompt);
     cardImages.push(buffer.toString("base64"));

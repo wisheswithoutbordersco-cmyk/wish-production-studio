@@ -40,15 +40,49 @@ export interface PageContent {
     x: number;
     y: number;
     width?: number;
+    height?: number;
     fontSize?: number;
     font?: string;
     align?: "left" | "center" | "right";
     color?: string;
+    // Readability panel: when set, a filled rectangle is drawn behind the text.
+    // Accepts hex (#ffffff) or rgba() (e.g. "rgba(255,255,255,0.9)").
+    backgroundColor?: string;
+    // Alias for color (font color). `color` still works.
+    fontColor?: string;
+    // Internal padding between the panel edges and the text.
+    padding?: number;
+    // Optional corner radius for the panel.
+    radius?: number;
   }>;
   // Whether to show cut lines (for cards/flashcards)
   showCutLines?: boolean;
   // Background color
   backgroundColor?: string;
+}
+
+/**
+ * Parses a color string into a hex color plus an opacity value.
+ * Supports "#rrggbb", "#rgb", and "rgba(r,g,b,a)" / "rgb(r,g,b)".
+ * Defaults to opaque white when parsing fails.
+ */
+function parseColorWithAlpha(input: string): { color: string; opacity: number } {
+  const value = input.trim();
+  const rgbaMatch = value.match(
+    /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([0-9.]+)\s*)?\)$/i
+  );
+  if (rgbaMatch) {
+    const r = Math.max(0, Math.min(255, parseInt(rgbaMatch[1], 10)));
+    const g = Math.max(0, Math.min(255, parseInt(rgbaMatch[2], 10)));
+    const b = Math.max(0, Math.min(255, parseInt(rgbaMatch[3], 10)));
+    const a = rgbaMatch[4] !== undefined ? Math.max(0, Math.min(1, parseFloat(rgbaMatch[4]))) : 1;
+    const hex =
+      "#" +
+      [r, g, b].map((n) => n.toString(16).padStart(2, "0")).join("");
+    return { color: hex, opacity: a };
+  }
+  // Hex or named color - render fully opaque.
+  return { color: value, opacity: 1 };
 }
 
 export async function assemblePdf(pages: PageContent[]): Promise<Buffer> {
@@ -132,11 +166,45 @@ export async function assemblePdf(pages: PageContent[]): Promise<Buffer> {
       // Content blocks
       if (page.contentBlocks) {
         for (const block of page.contentBlocks) {
-          doc.font(block.font === "bold" ? "Helvetica-Bold" : "Helvetica")
-            .fontSize(block.fontSize || 11)
-            .fillColor(block.color || "#333333")
+          const fontName = block.font === "bold" ? "Helvetica-Bold" : "Helvetica";
+          const fontSize = block.fontSize || 11;
+          const blockWidth = block.width || PAGE_WIDTH - 2 * MARGIN;
+          const textColor = block.fontColor || block.color || "#333333";
+
+          // Optional readability panel behind the text.
+          if (block.backgroundColor) {
+            const padding = block.padding ?? 8;
+            // Measure the text so the panel matches the wrapped text height.
+            doc.font(fontName).fontSize(fontSize);
+            const textWidthForMeasure = blockWidth;
+            const measuredHeight = doc.heightOfString(block.text, {
+              width: textWidthForMeasure,
+              align: block.align || "left",
+            });
+            const panelHeight = (block.height ?? measuredHeight) + padding * 2;
+            const panelX = block.x - padding;
+            const panelY = block.y - padding;
+            const panelWidth = blockWidth + padding * 2;
+
+            const { color: fillColor, opacity: fillOpacity } = parseColorWithAlpha(
+              block.backgroundColor
+            );
+
+            doc.save();
+            doc.fillOpacity(fillOpacity);
+            if (block.radius && block.radius > 0) {
+              doc.roundedRect(panelX, panelY, panelWidth, panelHeight, block.radius).fill(fillColor);
+            } else {
+              doc.rect(panelX, panelY, panelWidth, panelHeight).fill(fillColor);
+            }
+            doc.restore();
+          }
+
+          doc.font(fontName)
+            .fontSize(fontSize)
+            .fillColor(textColor)
             .text(block.text, block.x, block.y, {
-              width: block.width || PAGE_WIDTH - 2 * MARGIN,
+              width: blockWidth,
               align: block.align || "left",
             });
         }

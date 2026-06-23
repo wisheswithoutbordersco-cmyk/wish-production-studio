@@ -146,11 +146,13 @@ async function generateWorksheetPage(pageIndex: number, job: GenerationJob): Pro
     };
   }
 
-  // Activity pages
+  // Activity pages — full edge-to-edge decorative background. Readability is
+  // guaranteed by white panels drawn behind the text in the PDF assembly step,
+  // so the image no longer needs a forced blank-white center.
   const prompt = buildImagePrompt({
-    subject: `decorative page border and frame design for a ${opts.subject} ${opts.specificSkill} worksheet`,
+    subject: `decorative full-page background for a ${opts.subject} ${opts.specificSkill} worksheet`,
     theme: opts.theme,
-    additionalDetails: `elegant border frame with themed decorative elements ONLY around the outer edges of the page, the center 70% of the page must be completely plain white with no illustrations, suitable for ${opts.gradeLevel} grade level educational worksheet, print-ready`,
+    additionalDetails: `soft muted decorative illustration filling the entire page edge-to-edge, light and low-contrast so dark text panels remain readable on top, suitable for ${opts.gradeLevel} grade level educational worksheet, print-ready`,
   });
   const { imageUrl } = await generatePageImage(prompt);
 
@@ -279,9 +281,12 @@ async function finalizeWorksheetPdf(job: GenerationJob): Promise<void> {
           totalPages: job.totalPages,
         });
       } else {
-        // Activity page with content overlay
+        // Activity page with content overlay. Each text group sits on a solid/
+        // semi-transparent white panel so it is readable over the background.
         const wc = page.metadata?.worksheetContent || {};
         const contentBlocks: NonNullable<PageContent["contentBlocks"]> = [];
+        const PANEL = "rgba(255,255,255,0.92)";
+        const PANEL_SOFT = "rgba(255,255,255,0.85)";
 
         // Title
         contentBlocks.push({
@@ -292,19 +297,25 @@ async function finalizeWorksheetPdf(job: GenerationJob): Promise<void> {
           fontSize: 18,
           font: "bold",
           align: "center",
-          color: "#1a1a1a",
+          fontColor: "#1a1a1a",
+          backgroundColor: PANEL,
+          padding: 8,
+          radius: 6,
         });
 
         // Activity type badge
         contentBlocks.push({
           text: `Activity: ${wc.activityType || "practice"}`,
-          x: CONTENT_LEFT,
-          y: CONTENT_TOP + 28,
-          width: CONTENT_WIDTH,
+          x: CONTENT_LEFT + 8,
+          y: CONTENT_TOP + 30,
+          width: CONTENT_WIDTH - 16,
           fontSize: 9,
           font: "normal",
           align: "center",
-          color: "#888888",
+          fontColor: "#666666",
+          backgroundColor: PANEL_SOFT,
+          padding: 4,
+          radius: 3,
         });
 
         // Instructions
@@ -312,28 +323,37 @@ async function finalizeWorksheetPdf(job: GenerationJob): Promise<void> {
           contentBlocks.push({
             text: wc.instructions,
             x: CONTENT_LEFT,
-            y: CONTENT_TOP + 50,
+            y: CONTENT_TOP + 54,
             width: CONTENT_WIDTH,
             fontSize: 11,
-            font: "normal",
+            font: "bold",
             align: "center",
-            color: "#444444",
+            fontColor: "#333333",
+            backgroundColor: PANEL,
+            padding: 6,
+            radius: 4,
           });
         }
 
-        // Activity items
+        // Activity items spread to fill the full usable height (no blank bottom).
         const items: string[] = wc.items || [];
+        const ITEMS_TOP = CONTENT_TOP + 96;
+        const ITEMS_BOTTOM = PAGE_HEIGHT - 60;
+        const count = Math.max(items.length, 1);
+        const slot = Math.min(LINE_HEIGHT + 6, (ITEMS_BOTTOM - ITEMS_TOP) / count);
         items.forEach((item: string, idx: number) => {
-          const yPos = CONTENT_TOP + 90 + idx * LINE_HEIGHT;
           contentBlocks.push({
             text: item,
             x: CONTENT_LEFT,
-            y: yPos,
+            y: ITEMS_TOP + idx * slot,
             width: CONTENT_WIDTH,
             fontSize: 12,
             font: "normal",
             align: "left",
-            color: "#222222",
+            fontColor: "#1a1a1a",
+            backgroundColor: PANEL,
+            padding: 6,
+            radius: 4,
           });
         });
 

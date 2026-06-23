@@ -3,7 +3,29 @@
  * Generates bilateral coordination, stroke practice, and fine motor skills worksheets.
  */
 import { buildImagePrompt, generatePageImage, processChunk } from "./shared";
-import { createJob, getJob, type GenerationJob, type PageResult } from "../jobs";
+import { createJob, getJob, updateJob, addPageResult, type GenerationJob, type PageResult } from "../jobs";
+import { assemblePdf, fetchImageBuffer, PageContent } from "../pdfAssembly";
+import { storagePut } from "../storage";
+
+const PAGE_WIDTH = 612;
+
+// Short, child-facing instruction for each activity type so every page tells
+// the learner what to do (fixes "no instructions" symptom).
+const ACTIVITY_INSTRUCTIONS: Record<string, string> = {
+  "Bilateral Coordination":
+    "Use both hands together. Trace each side of the pattern at the same time, following the dotted lines.",
+  "Stroke Practice":
+    "Trace each dotted line in the direction of the arrows. Start at the dot and follow the path smoothly.",
+  "Fine Motor":
+    "Carefully trace or cut along the lines. Stay on the path and take your time.",
+};
+
+function getActivityInstruction(activityType: string): string {
+  return (
+    ACTIVITY_INSTRUCTIONS[activityType] ||
+    "Follow the lines and complete the activity at your own pace."
+  );
+}
 
 export interface BrainTrainingOptions {
   activityType: string; // "Bilateral Coordination" | "Stroke Practice" | "Fine Motor"
@@ -79,11 +101,99 @@ async function generateBrainTrainingPage(pageIndex: number, job: GenerationJob):
 
   const { imageUrl } = await generatePageImage(prompt);
 
+  // Build a human-readable activity name and an instruction line so the
+  // finalizer can overlay them — this is what was missing before.
+  const activityName = `${opts.activityType} \u2014 ${difficultyMod.split(",")[0]}`;
+  const instruction = getActivityInstruction(opts.activityType);
+
   return {
     pageNumber: pageIndex + 1,
     imageUrl,
     status: "success",
+    metadata: { activityName, instruction },
   };
+}
+
+/**
+ * Custom finalizer for brain training. The shared finalizer placed the image
+ * with no text, which is why pages looked half-filled and had no instructions.
+ * This version keeps the edge-to-edge worksheet image and adds a readable
+ * instruction strip at the top of each page.
+ */
+async function finalizeBrainTrainingPdf(job: GenerationJob): Promise<void> {
+  updateJob(job.id, { statusMessage: "Assembling brain training PDF..." });
+
+  const successPages = job.pageResults.filter((r) => r.status === "success");
+  if (successPages.length === 0) {
+    updateJob(job.id, { status: "error", errorMessage: "No pages were generated successfully." });
+    return;
+  }
+
+  try {
+    const opts = job.options as BrainTrainingOptions;
+    const pageContents: PageContent[] = [];
+
+    for (const page of successPages) {
+      const buffer = await fetchImageBuffer(page.imageUrl);
+      const activityName: string = page.metadata?.activityName || opts.activityType;
+      const instruction: string =
+        page.metadata?.instruction || getActivityInstruction(opts.activityType);
+
+      const contentBlocks: NonNullable<PageContent["contentBlocks"]> = [
+        {
+          text: activityName,
+          x: 30,
+          y: 26,
+          width: PAGE_WIDTH - 60,
+          fontSize: 16,
+          font: "bold",
+          align: "center",
+          fontColor: "#1a1a1a",
+          backgroundColor: "rgba(255,255,255,0.9)",
+          padding: 8,
+          radius: 6,
+        },
+        {
+          text: instruction,
+          x: 30,
+          y: 58,
+          width: PAGE_WIDTH - 60,
+          fontSize: 11,
+          font: "normal",
+          align: "center",
+          fontColor: "#333333",
+          backgroundColor: "rgba(255,255,255,0.85)",
+          padding: 6,
+          radius: 5,
+        },
+      ];
+
+      pageContents.push({
+        imageBuffer: buffer,
+        contentBlocks,
+        pageNumber: page.pageNumber,
+        totalPages: job.totalPages,
+      });
+    }
+
+    const pdfBuffer = await assemblePdf(pageContents);
+    const { url: pdfUrl } = await storagePut(
+      `products/${job.generatorType}/${job.filename}`,
+      pdfBuffer,
+      "application/pdf"
+    );
+    const coverUrl = successPages[0]?.imageUrl || null;
+
+    updateJob(job.id, {
+      status: successPages.length === job.totalPages ? "complete" : "partial",
+      pdfUrl,
+      coverImageUrl: coverUrl,
+      statusMessage: "PDF ready for download!",
+    });
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : "PDF assembly failed";
+    updateJob(job.id, { status: "error", errorMessage: errorMsg });
+  }
 }
 
 export function createBrainTrainingJob(options: BrainTrainingOptions): string {
@@ -99,5 +209,7 @@ export function createBrainTrainingJob(options: BrainTrainingOptions): string {
 export async function processBrainTrainingChunk(jobId: string): Promise<void> {
   const job = getJob(jobId);
   if (!job) throw new Error("Job not found");
-  await processChunk(job, generateBrainTrainingPage);
+  // Use the shared chunk loop (unchanged architecture / PAGES_PER_CHUNK) for
+  // page generation, but finalize with our instruction-overlay PDF builder.
+  await processChunk(job, generateBrainTrainingPage, finalizeBrainTrainingPdf);
 }

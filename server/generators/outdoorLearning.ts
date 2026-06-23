@@ -293,85 +293,81 @@ async function finalizeOutdoorLearningPdf(job: GenerationJob): Promise<void> {
           totalPages: job.totalPages,
         });
       } else {
-        // Activity page with structured content overlay
+        // Activity page with structured content overlay. Every text group sits
+        // on a white/semi-transparent panel so it is readable over the scene.
         const ac = page.metadata?.activityContent || {};
         const contentBlocks: NonNullable<PageContent["contentBlocks"]> = [];
+        const PANEL = "rgba(255,255,255,0.92)";
+        const PANEL_SOFT = "rgba(255,255,255,0.85)";
 
         // Activity title (top banner area)
         contentBlocks.push({
           text: ac.activityName || "Outdoor Activity",
-          x: 40,
-          y: 40,
-          width: PAGE_WIDTH - 80,
+          x: 45,
+          y: 42,
+          width: PAGE_WIDTH - 90,
           fontSize: 20,
           font: "bold",
           align: "center",
-          color: "#1a1a1a",
+          fontColor: "#1a1a1a",
+          backgroundColor: PANEL,
+          padding: 8,
+          radius: 6,
         });
 
         // Learning objective
         contentBlocks.push({
           text: `Objective: ${ac.objective || ""}`,
           x: 50,
-          y: 75,
+          y: 80,
           width: PAGE_WIDTH - 100,
           fontSize: 10,
           font: "normal",
           align: "center",
-          color: "#444444",
+          fontColor: "#444444",
+          backgroundColor: PANEL_SOFT,
+          padding: 5,
+          radius: 4,
         });
 
-        // Materials section
+        // Materials section grouped into one panel.
         const materials: string[] = ac.materials || [];
+        const materialsText =
+          "Materials Needed:\n" +
+          (materials.length ? materials.map((m) => `\u2022 ${m}`).join("\n") : "\u2022 None");
         contentBlocks.push({
-          text: "Materials Needed:",
+          text: materialsText,
           x: 50,
-          y: 110,
-          width: 200,
-          fontSize: 12,
-          font: "bold",
+          y: 120,
+          width: 250,
+          fontSize: 10,
+          font: "normal",
           align: "left",
-          color: "#1a1a1a",
+          fontColor: "#1a1a1a",
+          backgroundColor: PANEL,
+          padding: 8,
+          radius: 5,
         });
 
-        materials.forEach((mat: string, idx: number) => {
-          contentBlocks.push({
-            text: `\u2022 ${mat}`,
-            x: 60,
-            y: 130 + idx * 18,
-            width: 250,
-            fontSize: 10,
-            font: "normal",
-            align: "left",
-            color: "#333333",
-          });
-        });
-
-        // Steps section (positioned in lower portion)
+        // Steps section grouped into one panel in the lower portion.
         const steps: string[] = ac.steps || [];
-        const stepsStartY = 280;
+        const stepsText =
+          "Steps:\n" +
+          (steps.length
+            ? steps.map((s, i) => `${i + 1}. ${s}`).join("\n")
+            : "1. Explore and observe nature around you.");
         contentBlocks.push({
-          text: "Steps:",
+          text: stepsText,
           x: 50,
-          y: stepsStartY,
+          y: 300,
           width: PAGE_WIDTH - 100,
-          fontSize: 14,
-          font: "bold",
+          fontSize: 11,
+          font: "normal",
           align: "left",
-          color: "#1a1a1a",
-        });
-
-        steps.forEach((step: string, idx: number) => {
-          contentBlocks.push({
-            text: `${idx + 1}. ${step}`,
-            x: 60,
-            y: stepsStartY + 25 + idx * 40,
-            width: PAGE_WIDTH - 120,
-            fontSize: 11,
-            font: "normal",
-            align: "left",
-            color: "#222222",
-          });
+          fontColor: "#1a1a1a",
+          backgroundColor: PANEL,
+          padding: 10,
+          radius: 6,
         });
 
         // Fun fact at bottom
@@ -379,12 +375,15 @@ async function finalizeOutdoorLearningPdf(job: GenerationJob): Promise<void> {
           contentBlocks.push({
             text: `\u2B50 Fun Fact: ${ac.funFact}`,
             x: 50,
-            y: 680,
+            y: 690,
             width: PAGE_WIDTH - 100,
             fontSize: 9,
             font: "normal",
             align: "center",
-            color: "#555555",
+            fontColor: "#444444",
+            backgroundColor: PANEL_SOFT,
+            padding: 6,
+            radius: 4,
           });
         }
 

@@ -124,7 +124,8 @@ export async function generatePageImage(prompt: string): Promise<{ imageUrl: str
  */
 export async function processChunk(
   job: GenerationJob,
-  generatePageFn: (pageIndex: number, job: GenerationJob) => Promise<PageResult>
+  generatePageFn: (pageIndex: number, job: GenerationJob) => Promise<PageResult>,
+  finalizeFn: (job: GenerationJob) => Promise<void> = finalizePdf
 ): Promise<void> {
   const startIndex = job.nextPageIndex;
   const endIndex = Math.min(startIndex + PAGES_PER_CHUNK, job.totalPages);
@@ -157,8 +158,8 @@ export async function processChunk(
   // Check if all pages are done
   const updatedJob = getJob(job.id);
   if (updatedJob && updatedJob.nextPageIndex >= updatedJob.totalPages) {
-    // All pages generated, assemble PDF
-    await finalizePdf(updatedJob);
+    // All pages generated, assemble PDF (custom finalizer if provided)
+    await finalizeFn(updatedJob);
   }
 }
 
