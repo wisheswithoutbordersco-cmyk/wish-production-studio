@@ -1,17 +1,11 @@
 /**
- * Worksheet Generator
- * Generates educational worksheets with GPT content overlaid on themed decorative borders.
+ * Worksheet Generator — v3 (Clean Programmatic Design)
  *
- * Flow per page:
- * 1. Generate a decorative border/frame image (Flux) — center is intentionally blank
- * 2. Generate age-appropriate educational content (GPT) for the subject/skill
- * 3. Overlay the content as real text in the center area via pdfAssembly contentBlocks
- *
- * Features:
- * - Cover page with title and subject info
- * - 5+ activity pages with varied activity types
- * - Each page has: title, instructions, activity items
- * - Semi-transparent background behind text for readability
+ * Strategy:
+ * - COVER page: Full-page AI illustration with title overlay
+ * - CONTENT pages: NO AI images. Clean white pages with colored header,
+ *   well-spaced activity items, and professional typography.
+ *   Each page is a different activity type (fill-in-blank, matching, etc.)
  */
 import { buildImagePrompt, generatePageImage, generateContent } from "./shared";
 import { createJob, getJob, updateJob, addPageResult, type GenerationJob, type PageResult } from "../jobs";
@@ -20,6 +14,8 @@ import { storagePut } from "../storage";
 
 const PAGE_WIDTH = 612;
 const PAGE_HEIGHT = 792;
+const MARGIN = 50;
+const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
 
 export interface WorksheetOptions {
   subject: string;
@@ -49,6 +45,22 @@ const ACTIVITY_TYPES = [
   "ordering/sequencing",
 ];
 
+// Color schemes per subject
+const SUBJECT_COLORS: Record<string, { primary: string; secondary: string }> = {
+  "Math": { primary: "#1565C0", secondary: "#42A5F5" },
+  "Reading": { primary: "#6A1B9A", secondary: "#AB47BC" },
+  "Writing": { primary: "#2E7D32", secondary: "#66BB6A" },
+  "Science": { primary: "#E65100", secondary: "#FF9800" },
+  "Social Studies": { primary: "#4E342E", secondary: "#8D6E63" },
+  "Art": { primary: "#AD1457", secondary: "#EC407A" },
+  "Music": { primary: "#283593", secondary: "#5C6BC0" },
+  "SEL": { primary: "#00695C", secondary: "#26A69A" },
+};
+
+function getColors(subject: string) {
+  return SUBJECT_COLORS[subject] || SUBJECT_COLORS["Math"];
+}
+
 function gradeToAgeRange(gradeLevel: string): string {
   if (gradeLevel.includes("Pre-K") || gradeLevel.includes("Preschool")) return "ages 3-5";
   if (gradeLevel.includes("K") || gradeLevel.includes("Kindergarten")) return "ages 5-6";
@@ -62,15 +74,14 @@ function gradeToAgeRange(gradeLevel: string): string {
 }
 
 /**
- * Generate age-appropriate worksheet content using GPT with varied activity types.
+ * Generate age-appropriate worksheet content using GPT.
  */
 async function generateWorksheetContent(opts: WorksheetOptions, pageVariant: number): Promise<{ title: string; instructions: string; items: string[]; activityType: string }> {
   const ageRange = gradeToAgeRange(opts.gradeLevel);
   const activityType = ACTIVITY_TYPES[pageVariant % ACTIVITY_TYPES.length];
 
   const systemPrompt = `You are an expert elementary school teacher creating engaging, age-appropriate educational worksheets.
-Your worksheets are clear, encouraging, and perfectly matched to the student's level.
-Always include a worksheet title, clear instructions, and 5-8 activity items.`;
+Your worksheets are clear, encouraging, and perfectly matched to the student's level.`;
 
   const userPrompt = `Create worksheet content for:
 - Subject: ${opts.subject}
@@ -79,29 +90,26 @@ Always include a worksheet title, clear instructions, and 5-8 activity items.`;
 - Activity Type: ${activityType}
 - Variant: ${pageVariant + 1} (make this unique from other variants)
 
-Return a JSON object with this exact structure:
+Return a JSON object:
 {
-  "title": "Worksheet title (short, engaging)",
-  "instructions": "Clear one-sentence instruction for the student",
-  "items": [
-    "Item 1 text with blank line indicator using ___________",
-    "Item 2 text...",
-    "Item 3 text...",
-    "Item 4 text...",
-    "Item 5 text...",
-    "Item 6 text..."
-  ]
+  "title": "Worksheet title (short, max 5 words)",
+  "instructions": "Clear one-sentence instruction",
+  "items": ["Item 1", "Item 2", "Item 3", "Item 4", "Item 5", "Item 6"]
 }
 
 For ${activityType} format:
 - fill-in-the-blank: sentences with ___________ for missing words
 - matching: "Match: [term] → ___________" format
-- multiple-choice: "Q: question? a) b) c) d)" format
-- short-answer: questions requiring brief written answers with lines
+- multiple-choice: "Q: question?  a) option  b) option  c) option  d) option" format
+- short-answer: questions requiring brief written answers
 - true-or-false: statements followed by "True / False: ___"
 - ordering/sequencing: "Put in order: [items to sequence]"
 
-Make all items age-appropriate, educational, and directly related to ${opts.specificSkill}.`;
+RULES:
+- All items must be age-appropriate for ${ageRange}
+- Each item must be self-contained (no references to images)
+- NEVER include placeholder text like "[Picture of...]"
+- Keep items concise — one line each`;
 
   const content = await generateContent({
     systemPrompt,
@@ -131,11 +139,11 @@ async function generateWorksheetPage(pageIndex: number, job: GenerationJob): Pro
   const opts = job.options as WorksheetOptions;
 
   if (pageIndex === 0) {
-    // Cover page
+    // Cover page — ONLY page with AI image
     const prompt = buildImagePrompt({
-      subject: `colorful educational workbook cover with ${opts.subject.toLowerCase()} themed elements and decorative patterns`,
+      subject: `colorful educational workbook cover with ${opts.subject.toLowerCase()} themed elements`,
       theme: opts.theme,
-      additionalDetails: `professional educational worksheet cover design, vibrant and appealing for ${opts.gradeLevel} students, child-friendly`,
+      additionalDetails: `professional educational worksheet cover design, vibrant and appealing for ${opts.gradeLevel} students, filling the entire canvas edge-to-edge with no borders or frames`,
     });
     const { imageUrl } = await generatePageImage(prompt);
     return {
@@ -146,24 +154,14 @@ async function generateWorksheetPage(pageIndex: number, job: GenerationJob): Pro
     };
   }
 
-  // Activity pages — full edge-to-edge decorative background. Readability is
-  // guaranteed by white panels drawn behind the text in the PDF assembly step,
-  // so the image no longer needs a forced blank-white center.
-  const prompt = buildImagePrompt({
-    subject: `decorative full-page background for a ${opts.subject} ${opts.specificSkill} worksheet`,
-    theme: opts.theme,
-    additionalDetails: `soft muted decorative illustration filling the entire page edge-to-edge, light and low-contrast so dark text panels remain readable on top, suitable for ${opts.gradeLevel} grade level educational worksheet, print-ready`,
-  });
-  const { imageUrl } = await generatePageImage(prompt);
-
-  // Generate GPT educational content
+  // Content pages — NO AI image, just GPT content
   const worksheetContent = await generateWorksheetContent(opts, pageIndex - 1);
 
   return {
     pageNumber: pageIndex + 1,
-    imageUrl,
+    imageUrl: "",
     status: "success",
-    metadata: { worksheetContent },
+    metadata: { worksheetContent, isContentPage: true },
   };
 }
 
@@ -207,10 +205,10 @@ async function processWorksheetChunkInternal(job: GenerationJob): Promise<void> 
 }
 
 /**
- * Assemble the worksheet PDF with content text overlaid on border images.
+ * Assemble the worksheet PDF — clean programmatic design, no background images on content pages.
  */
 async function finalizeWorksheetPdf(job: GenerationJob): Promise<void> {
-  updateJob(job.id, { statusMessage: "Assembling PDF with content..." });
+  updateJob(job.id, { statusMessage: "Assembling PDF..." });
 
   const successPages = job.pageResults.filter(r => r.status === "success");
   if (successPages.length === 0) {
@@ -220,145 +218,176 @@ async function finalizeWorksheetPdf(job: GenerationJob): Promise<void> {
 
   try {
     const opts = job.options as WorksheetOptions;
-    const MARGIN = 50;
-    const CONTENT_TOP = 130;
-    const CONTENT_LEFT = MARGIN + 20;
-    const CONTENT_WIDTH = PAGE_WIDTH - 2 * MARGIN - 40;
-    const LINE_HEIGHT = 48;
-
+    const colors = getColors(opts.subject);
     const pageContents: PageContent[] = [];
 
     for (const page of successPages) {
-      const buffer = await fetchImageBuffer(page.imageUrl);
-
       if (page.metadata?.isCover) {
-        // Cover page
+        // Cover page — full AI image with title overlay
+        const buffer = await fetchImageBuffer(page.imageUrl);
         pageContents.push({
           imageBuffer: buffer,
           contentBlocks: [
             {
-              text: `${opts.subject}`,
-              x: 50,
-              y: 250,
-              width: PAGE_WIDTH - 100,
-              fontSize: 32,
+              text: opts.subject,
+              x: MARGIN,
+              y: 240,
+              width: CONTENT_WIDTH,
+              fontSize: 34,
               font: "bold",
               align: "center",
-              color: "#FFFFFF",
+              fontColor: "#FFFFFF",
+              backgroundColor: "rgba(0,0,0,0.5)",
+              padding: 16,
+              radius: 8,
             },
             {
               text: opts.specificSkill,
-              x: 50,
-              y: 300,
-              width: PAGE_WIDTH - 100,
+              x: MARGIN,
+              y: 310,
+              width: CONTENT_WIDTH,
               fontSize: 20,
               font: "normal",
               align: "center",
-              color: "#FFFFFF",
+              fontColor: "#FFFFFF",
             },
             {
-              text: `Grade: ${opts.gradeLevel}`,
-              x: 50,
-              y: 340,
-              width: PAGE_WIDTH - 100,
+              text: `Grade: ${opts.gradeLevel} | Worksheets`,
+              x: MARGIN,
+              y: 345,
+              width: CONTENT_WIDTH,
               fontSize: 14,
               font: "normal",
               align: "center",
-              color: "#FFFFFF",
+              fontColor: "#FFFFFF",
             },
             {
-              text: "Worksheets",
-              x: 50,
-              y: 380,
-              width: PAGE_WIDTH - 100,
-              fontSize: 16,
-              font: "bold",
+              text: "WishesWithoutBordersCo",
+              x: MARGIN,
+              y: 700,
+              width: CONTENT_WIDTH,
+              fontSize: 11,
+              font: "normal",
               align: "center",
-              color: "#FFFFFF",
+              fontColor: "#FFFFFF",
             },
           ],
           pageNumber: 1,
           totalPages: job.totalPages,
         });
       } else {
-        // Activity page with content overlay. Each text group sits on a solid/
-        // semi-transparent white panel so it is readable over the background.
+        // ═══════════════════════════════════════════════════════════════════
+        // CONTENT PAGE — Clean white background, colored header, no AI image
+        // ═══════════════════════════════════════════════════════════════════
         const wc = page.metadata?.worksheetContent || {};
         const contentBlocks: NonNullable<PageContent["contentBlocks"]> = [];
-        const PANEL = "rgba(255,255,255,0.92)";
-        const PANEL_SOFT = "rgba(255,255,255,0.85)";
 
-        // Title
+        // ── Header bar (colored banner) ──
         contentBlocks.push({
           text: wc.title || "Practice",
-          x: CONTENT_LEFT,
-          y: CONTENT_TOP,
-          width: CONTENT_WIDTH,
-          fontSize: 18,
+          x: 0,
+          y: 0,
+          width: PAGE_WIDTH,
+          fontSize: 20,
           font: "bold",
           align: "center",
+          fontColor: "#FFFFFF",
+          backgroundColor: colors.primary,
+          padding: 18,
+        });
+
+        // ── Activity type badge ──
+        contentBlocks.push({
+          text: `Activity Type: ${wc.activityType || "practice"}`,
+          x: MARGIN,
+          y: 58,
+          width: CONTENT_WIDTH,
+          fontSize: 9,
+          font: "normal",
+          align: "right",
+          fontColor: "#888888",
+          padding: 2,
+        });
+
+        // ── Instructions ──
+        contentBlocks.push({
+          text: wc.instructions || "Complete the activity below.",
+          x: MARGIN,
+          y: 78,
+          width: CONTENT_WIDTH,
+          fontSize: 12,
+          font: "bold",
+          align: "left",
           fontColor: "#1a1a1a",
-          backgroundColor: PANEL,
-          padding: 8,
+          backgroundColor: "#F0F4F8",
+          padding: 12,
           radius: 6,
         });
 
-        // Activity type badge
-        contentBlocks.push({
-          text: `Activity: ${wc.activityType || "practice"}`,
-          x: CONTENT_LEFT + 8,
-          y: CONTENT_TOP + 30,
-          width: CONTENT_WIDTH - 16,
-          fontSize: 9,
-          font: "normal",
-          align: "center",
-          fontColor: "#666666",
-          backgroundColor: PANEL_SOFT,
-          padding: 4,
-          radius: 3,
-        });
+        // ── Activity items with generous spacing and answer lines ──
+        const items: string[] = Array.isArray(wc.items) ? wc.items : [];
+        const ITEMS_START_Y = 130;
+        const ITEMS_END_Y = PAGE_HEIGHT - 80;
+        const itemCount = Math.max(items.length, 1);
+        const spacing = Math.min((ITEMS_END_Y - ITEMS_START_Y) / itemCount, 100);
 
-        // Instructions
-        if (wc.instructions) {
-          contentBlocks.push({
-            text: wc.instructions,
-            x: CONTENT_LEFT,
-            y: CONTENT_TOP + 54,
-            width: CONTENT_WIDTH,
-            fontSize: 11,
-            font: "bold",
-            align: "center",
-            fontColor: "#333333",
-            backgroundColor: PANEL,
-            padding: 6,
-            radius: 4,
-          });
-        }
-
-        // Activity items spread to fill the full usable height (no blank bottom).
-        const items: string[] = wc.items || [];
-        const ITEMS_TOP = CONTENT_TOP + 96;
-        const ITEMS_BOTTOM = PAGE_HEIGHT - 60;
-        const count = Math.max(items.length, 1);
-        const slot = Math.min(LINE_HEIGHT + 6, (ITEMS_BOTTOM - ITEMS_TOP) / count);
         items.forEach((item: string, idx: number) => {
+          const yPos = ITEMS_START_Y + idx * spacing;
+
+          // Numbered item
           contentBlocks.push({
-            text: item,
-            x: CONTENT_LEFT,
-            y: ITEMS_TOP + idx * slot,
+            text: `${idx + 1}.  ${item}`,
+            x: MARGIN,
+            y: yPos,
             width: CONTENT_WIDTH,
             fontSize: 12,
             font: "normal",
             align: "left",
             fontColor: "#1a1a1a",
-            backgroundColor: PANEL,
-            padding: 6,
-            radius: 4,
+            padding: 8,
+          });
+
+          // Answer line
+          contentBlocks.push({
+            text: "_______________________________________________",
+            x: MARGIN + 24,
+            y: yPos + 30,
+            width: CONTENT_WIDTH - 48,
+            fontSize: 11,
+            font: "normal",
+            align: "left",
+            fontColor: "#CCCCCC",
           });
         });
 
+        // ── Footer ──
+        contentBlocks.push({
+          text: `${opts.subject} | ${opts.specificSkill} | ${opts.gradeLevel}`,
+          x: 0,
+          y: PAGE_HEIGHT - 36,
+          width: PAGE_WIDTH,
+          fontSize: 8,
+          font: "normal",
+          align: "center",
+          fontColor: "#FFFFFF",
+          backgroundColor: colors.secondary,
+          padding: 8,
+        });
+
+        // ── Name/Date line at top right ──
+        contentBlocks.push({
+          text: "Name: ________________  Date: ________",
+          x: MARGIN,
+          y: 56,
+          width: CONTENT_WIDTH,
+          fontSize: 10,
+          font: "normal",
+          align: "left",
+          fontColor: "#666666",
+        });
+
         pageContents.push({
-          imageBuffer: buffer,
+          backgroundColor: "#FFFFFF",
           contentBlocks,
           pageNumber: page.pageNumber,
           totalPages: job.totalPages,
@@ -389,8 +418,7 @@ async function finalizeWorksheetPdf(job: GenerationJob): Promise<void> {
 }
 
 export function createWorksheetJob(options: WorksheetOptions): string {
-  // Ensure minimum 5 pages (cover + 4 activity pages)
-  const totalPages = Math.max(5, options.quantity + 1); // +1 for cover
+  const totalPages = Math.max(5, options.quantity + 1);
   const job = createJob(
     "worksheet",
     totalPages,
