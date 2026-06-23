@@ -1,14 +1,17 @@
 /**
- * Workbook Generator
- * Generates multi-page educational activity workbooks using chunked generation.
- * Every page after cover has educational purpose stated via contentBlocks.
+ * Workbook Generator — v3 (Clean Programmatic Design)
  *
- * Features:
- * - Cover page with title and branding
- * - Activity prompts/instructions as text overlays on each page
- * - Labels on emotion grids and activity sections
- * - Every page has educational purpose
- * - Minimum 5+ pages (cover + 4 content pages)
+ * Strategy:
+ * - COVER page: Full-page AI illustration with title overlay (beautiful, eye-catching)
+ * - CONTENT pages: NO AI images. Clean white pages with colored header bars,
+ *   well-spaced activity items, answer lines, and professional typography.
+ *   Looks like a real Canva-designed workbook, not a PowerPoint slide.
+ *
+ * This approach produces sellable educational products because:
+ * 1. Text is always perfectly readable (black on white, no background noise)
+ * 2. Layout is consistent and professional across all pages
+ * 3. Activities have proper spacing for kids to write answers
+ * 4. Only the cover uses AI art (where it matters for first impressions)
  */
 import { buildImagePrompt, generatePageImage, generateContent } from "./shared";
 import { createJob, getJob, updateJob, addPageResult, type GenerationJob, type PageResult } from "../jobs";
@@ -28,90 +31,22 @@ export interface WorkbookOptions {
 
 const PAGE_WIDTH = 612;
 const PAGE_HEIGHT = 792;
+const MARGIN = 50;
+const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2; // 512
 
-const SUBJECT_PROMPTS: Record<string, string[]> = {
-  "Math": [
-    "colorful math-themed illustration with geometric shapes, counting objects, and number patterns",
-    "playful math activity scene with measuring tools, graphs, and mathematical symbols",
-    "fun arithmetic illustration with groups of themed objects for counting and addition",
-    "geometry exploration scene with various shapes, angles, and spatial patterns",
-    "math word problem illustration showing a real-world scenario with themed characters",
-  ],
-  "Reading": [
-    "cozy reading scene with open books, story characters, and imagination elements",
-    "phonics activity illustration with letter sounds and picture clues",
-    "reading comprehension scene with story elements and setting details",
-    "vocabulary building illustration with labeled objects and word connections",
-    "story sequencing scene with clear beginning, middle, and end visual elements",
-  ],
-  "Writing": [
-    "creative writing inspiration scene with story starters and imagination elements",
-    "handwriting practice illustration with themed decorative borders",
-    "journal writing scene with prompts and creative elements",
-    "letter writing illustration with envelope and friendly message elements",
-    "poetry writing scene with nature elements and creative imagery",
-  ],
-  "Science": [
-    "science exploration illustration with magnifying glass and nature observation",
-    "simple experiment scene with safe lab equipment and discovery elements",
-    "life cycle illustration showing growth stages of a plant or animal",
-    "weather and seasons scene with clouds, sun, rain, and seasonal changes",
-    "animal habitat illustration showing ecosystem with diverse creatures",
-  ],
-  "Social Studies": [
-    "community helpers illustration showing diverse workers in their roles",
-    "map and geography scene with landmarks and exploration elements",
-    "cultural celebration illustration showing diverse traditions",
-    "historical timeline scene with important events and diverse figures",
-    "citizenship and kindness illustration showing children helping community",
-  ],
-  "Art": [
-    "art studio scene with paint brushes, easels, and creative tools",
-    "color mixing illustration showing primary and secondary colors blending",
-    "art history inspired scene with famous art styles",
-    "craft activity illustration with scissors, paper, and creative materials",
-    "pattern and design scene with repeating motifs and symmetry",
-  ],
-  "SEL/Emotions": [
-    "emotions identification scene with diverse children showing different feelings",
-    "friendship and kindness illustration with children cooperating",
-    "self-regulation scene with calming strategies and mindfulness",
-    "growth mindset illustration showing persistence and achievement",
-    "empathy and understanding scene with diverse characters",
-  ],
-  "Back to School": [
-    "first day of school illustration with backpack and excited children",
-    "classroom setup scene with desks, books, and decorations",
-    "school rules illustration with friendly visual reminders",
-    "making friends scene with diverse children introducing themselves",
-    "school supply organization illustration with labeled materials",
-  ],
-  "Summer Review": [
-    "summer learning scene with outdoor activities and educational elements",
-    "vacation journal illustration with travel and discovery themes",
-    "summer reading scene with books and relaxing outdoor setting",
-    "outdoor math illustration with nature counting and patterns",
-    "summer science exploration with insects, plants, and observation",
-  ],
+// Color schemes per theme for the header bars and accents
+const THEME_COLORS: Record<string, { primary: string; secondary: string; accent: string }> = {
+  "Multicultural Kids": { primary: "#2E86AB", secondary: "#A23B72", accent: "#F18F01" },
+  "African Heritage": { primary: "#8B4513", secondary: "#DAA520", accent: "#228B22" },
+  "Caribbean Fun": { primary: "#00BCD4", secondary: "#FF6F00", accent: "#4CAF50" },
+  "Space Adventure": { primary: "#1A237E", secondary: "#7C4DFF", accent: "#00E5FF" },
+  "Ocean Explorer": { primary: "#006064", secondary: "#0097A7", accent: "#00BFA5" },
+  "Jungle Safari": { primary: "#33691E", secondary: "#F57F17", accent: "#795548" },
+  "Dinosaurs": { primary: "#4E342E", secondary: "#FF6F00", accent: "#689F38" },
 };
 
-/**
- * Removes raw AI placeholder text such as "[Picture of 5 children ...]" or
- * "(insert image here)" from generated copy. The PDF requires that no raw
- * placeholder text ever reaches the page; activities must be real text content.
- */
-function scrubPlaceholders(input?: string): string {
-  if (!input || typeof input !== "string") return "";
-  let out = input;
-  // Remove [ ... ] placeholder brackets that describe an image.
-  out = out.replace(/\[[^\]]*\]/g, " ");
-  // Remove ( insert / picture / image ... ) style placeholders.
-  out = out.replace(/\((?:[^)]*?(?:insert|picture|image|illustration|photo)[^)]*?)\)/gi, " ");
-  // Remove leading "Picture of ..."/"Image of ..." fragments.
-  out = out.replace(/\b(?:picture|image|illustration|photo)\s+of\b[^.,;:\n]*/gi, " ");
-  // Collapse whitespace left behind.
-  out = out.replace(/\s{2,}/g, " ").trim();
-  return out;
+function getColors(theme: string) {
+  return THEME_COLORS[theme] || THEME_COLORS["Multicultural Kids"];
 }
 
 function getThemeModifier(theme: string): string {
@@ -141,6 +76,19 @@ function getGradeLevelModifier(gradeLevel: string): string {
 }
 
 /**
+ * Removes raw AI placeholder text.
+ */
+function scrubPlaceholders(input?: string): string {
+  if (!input || typeof input !== "string") return "";
+  let out = input;
+  out = out.replace(/\[[^\]]*\]/g, " ");
+  out = out.replace(/\((?:[^)]*?(?:insert|picture|image|illustration|photo)[^)]*?)\)/gi, " ");
+  out = out.replace(/\b(?:picture|image|illustration|photo)\s+of\b[^.,;:\n]*/gi, " ");
+  out = out.replace(/\s{2,}/g, " ").trim();
+  return out;
+}
+
+/**
  * Generate educational activity content for a workbook page using GPT.
  */
 async function generateWorkbookActivity(opts: WorkbookOptions, pageIndex: number): Promise<{
@@ -148,11 +96,11 @@ async function generateWorkbookActivity(opts: WorkbookOptions, pageIndex: number
   educationalPurpose: string;
   instructions: string;
   activityItems: string[];
-  labels: Array<{ text: string; x: number; y: number }>;
 }> {
   const systemPrompt = `You are an expert educator creating engaging workbook activities for ${opts.gradeLevel} students.
 Subject: ${opts.subject}. Theme: ${opts.theme}.
-Each activity must be educational, age-appropriate, and clearly structured.`;
+Each activity must be educational, age-appropriate, and clearly structured.
+Activities must be completable with pencil and paper only.`;
 
   const userPrompt = `Create a workbook activity page (page ${pageIndex + 1}) for:
 - Subject: ${opts.subject}
@@ -161,21 +109,21 @@ Each activity must be educational, age-appropriate, and clearly structured.`;
 
 Return a JSON object:
 {
-  "pageTitle": "Short engaging title for this activity",
-  "educationalPurpose": "One sentence: what skill this page develops",
-  "instructions": "Clear instruction for the student (1-2 sentences)",
-  "activityItems": ["Activity item 1 with ___ blanks or prompts", "Item 2...", "Item 3...", "Item 4...", "Item 5..."],
-  "sectionLabels": ["Label 1", "Label 2"]
+  "pageTitle": "Short engaging title (max 6 words)",
+  "educationalPurpose": "One sentence: what skill this develops",
+  "instructions": "Clear 1-sentence instruction for the student",
+  "activityItems": ["Item 1", "Item 2", "Item 3", "Item 4", "Item 5"]
 }
 
-Make it unique from other pages. Include fill-in prompts, drawing prompts, matching, or reflection questions.
-For SEL/Emotions: include emotion identification, coping strategies, or social scenarios.
-For Math: include practice problems, word problems, or pattern activities.
-
-CRITICAL RULES:
-- NEVER output placeholder text describing an image, e.g. do NOT write "[Picture of 5 children]", "(insert image here)", or "Image of ...".
-- Every activity item must be a complete, self-contained text activity the child can do with pencil and paper (questions, prompts, blanks, matching lines, or reflection).
-- Do not reference an illustration that the worksheet does not contain.`;
+RULES:
+- Each activityItem must be a complete, self-contained text activity (question, fill-in-blank, matching, or reflection prompt)
+- Use ___ for blanks where kids write answers
+- For Math: include actual problems like "7 + 5 = ___" or word problems
+- For Reading: include comprehension questions or vocabulary exercises
+- For SEL/Emotions: include scenarios and reflection prompts
+- NEVER include placeholder text like "[Picture of...]" or "(insert image)"
+- Keep items concise — one line each ideally
+- Make each page DIFFERENT from others (vary activity types)`;
 
   const content = await generateContent({
     systemPrompt,
@@ -185,20 +133,11 @@ CRITICAL RULES:
 
   try {
     const parsed = JSON.parse(content);
-    const sectionLabels: string[] = parsed.sectionLabels || [];
-    // Position labels in the page margins
-    const labels = sectionLabels.map((label: string, idx: number) => ({
-      text: label,
-      x: 50,
-      y: 200 + idx * 200,
-    }));
-
     return {
       pageTitle: parsed.pageTitle || `Activity ${pageIndex + 1}`,
       educationalPurpose: parsed.educationalPurpose || `Develop ${opts.subject} skills`,
       instructions: parsed.instructions || "Complete the activity below.",
       activityItems: Array.isArray(parsed.activityItems) ? parsed.activityItems.slice(0, 6) : [],
-      labels,
     };
   } catch {
     return {
@@ -206,7 +145,6 @@ CRITICAL RULES:
       educationalPurpose: `Practice ${opts.subject} skills`,
       instructions: "Complete each activity below.",
       activityItems: Array.from({ length: 5 }, (_, i) => `${i + 1}. ___________________________________________`),
-      labels: [],
     };
   }
 }
@@ -215,33 +153,23 @@ async function generateWorkbookPage(pageIndex: number, job: GenerationJob): Prom
   const opts = job.options as WorkbookOptions;
 
   if (pageIndex === 0) {
-    // Cover page
+    // Cover page — the ONLY page that uses AI image generation
     const coverPrompt = buildImagePrompt({
       subject: `book cover illustration for "${opts.coverTitle || opts.subject + ' Workbook'}", ${getThemeModifier(opts.theme)}`,
-      additionalDetails: `professional educational workbook cover design, vibrant and appealing, ${getGradeLevelModifier(opts.gradeLevel)}`,
+      additionalDetails: `professional educational workbook cover design, vibrant and appealing, ${getGradeLevelModifier(opts.gradeLevel)}, filling the entire canvas edge-to-edge with no borders or frames`,
     });
     const { imageUrl } = await generatePageImage(coverPrompt);
     return { pageNumber: 1, imageUrl, status: "success", metadata: { isCover: true } };
   }
 
-  // Activity pages
-  const subjectPrompts = SUBJECT_PROMPTS[opts.subject] || SUBJECT_PROMPTS["Math"];
-  const subjectPrompt = subjectPrompts[(pageIndex - 1) % subjectPrompts.length];
-
-  const prompt = buildImagePrompt({
-    subject: `${subjectPrompt}, ${getThemeModifier(opts.theme)}`,
-    additionalDetails: `educational activity page illustration with soft muted colors to allow text overlay, ${getGradeLevelModifier(opts.gradeLevel)}, suitable for a ${opts.subject} workbook, the lower 60% should be lighter for text readability`,
-  });
-  const { imageUrl } = await generatePageImage(prompt);
-
-  // Generate educational activity content
+  // Content pages — NO AI image needed. Just generate the activity content.
   const activityContent = await generateWorkbookActivity(opts, pageIndex - 1);
 
   return {
     pageNumber: pageIndex + 1,
-    imageUrl,
+    imageUrl: "", // No image for content pages
     status: "success",
-    metadata: { activityContent },
+    metadata: { activityContent, isContentPage: true },
   };
 }
 
@@ -285,7 +213,8 @@ async function processWorkbookChunkInternal(job: GenerationJob): Promise<void> {
 }
 
 /**
- * Assemble the workbook PDF with educational content overlays.
+ * Assemble the workbook PDF with clean programmatic design.
+ * Content pages use NO background images — just clean typography and colored accents.
  */
 async function finalizeWorkbookPdf(job: GenerationJob): Promise<void> {
   updateJob(job.id, { statusMessage: "Assembling workbook PDF..." });
@@ -298,162 +227,169 @@ async function finalizeWorkbookPdf(job: GenerationJob): Promise<void> {
 
   try {
     const opts = job.options as WorkbookOptions;
+    const colors = getColors(opts.theme);
     const pageContents: PageContent[] = [];
 
     for (const page of successPages) {
-      const buffer = await fetchImageBuffer(page.imageUrl);
-
       if (page.metadata?.isCover) {
-        // Cover page
+        // Cover page — full AI image with title overlay
+        const buffer = await fetchImageBuffer(page.imageUrl);
         pageContents.push({
           imageBuffer: buffer,
           contentBlocks: [
             {
               text: opts.coverTitle || `${opts.subject} Workbook`,
-              x: 50,
-              y: 250,
-              width: PAGE_WIDTH - 100,
-              fontSize: 28,
+              x: MARGIN,
+              y: 240,
+              width: CONTENT_WIDTH,
+              fontSize: 32,
               font: "bold",
               align: "center",
-              color: "#FFFFFF",
+              fontColor: "#FFFFFF",
+              backgroundColor: "rgba(0,0,0,0.5)",
+              padding: 16,
+              radius: 8,
             },
             {
               text: opts.theme,
-              x: 50,
-              y: 295,
-              width: PAGE_WIDTH - 100,
+              x: MARGIN,
+              y: 310,
+              width: CONTENT_WIDTH,
               fontSize: 16,
               font: "normal",
               align: "center",
-              color: "#FFFFFF",
+              fontColor: "#FFFFFF",
             },
             {
               text: `Grade: ${opts.gradeLevel}`,
-              x: 50,
-              y: 325,
-              width: PAGE_WIDTH - 100,
+              x: MARGIN,
+              y: 340,
+              width: CONTENT_WIDTH,
               fontSize: 13,
               font: "normal",
               align: "center",
-              color: "#FFFFFF",
+              fontColor: "#FFFFFF",
             },
             {
-              text: opts.authorName || "",
-              x: 50,
+              text: opts.authorName || "WishesWithoutBordersCo",
+              x: MARGIN,
               y: 700,
-              width: PAGE_WIDTH - 100,
+              width: CONTENT_WIDTH,
               fontSize: 11,
               font: "normal",
               align: "center",
-              color: "#FFFFFF",
+              fontColor: "#FFFFFF",
             },
           ],
           pageNumber: 1,
           totalPages: job.totalPages,
         });
       } else {
-        // Activity page with educational content.
-        // Every text element sits inside a solid/semi-transparent white panel so
-        // black text is always readable over the decorative background image.
+        // ═══════════════════════════════════════════════════════════════════
+        // CONTENT PAGE — Clean programmatic design, NO background image
+        // ═══════════════════════════════════════════════════════════════════
         const ac = page.metadata?.activityContent || {};
         const contentBlocks: NonNullable<PageContent["contentBlocks"]> = [];
 
-        const PANEL = "rgba(255,255,255,0.92)";
-        const PANEL_SOFT = "rgba(255,255,255,0.85)";
-        const LEFT = 45;
-        const PANEL_WIDTH = PAGE_WIDTH - LEFT * 2;
-
-        // Header panel: title + educational purpose grouped on one solid band.
+        // ── Header bar (colored banner across top) ──
         contentBlocks.push({
           text: scrubPlaceholders(ac.pageTitle) || "Activity",
-          x: LEFT,
-          y: 44,
-          width: PANEL_WIDTH,
-          fontSize: 18,
+          x: 0,
+          y: 0,
+          width: PAGE_WIDTH,
+          fontSize: 20,
           font: "bold",
           align: "center",
-          fontColor: "#1a1a1a",
-          backgroundColor: PANEL,
-          padding: 10,
-          radius: 6,
+          fontColor: "#FFFFFF",
+          backgroundColor: colors.primary,
+          padding: 18,
         });
 
+        // ── Educational purpose (subtle line under header) ──
         contentBlocks.push({
-          text: `\u{1F4D6} ${scrubPlaceholders(ac.educationalPurpose) || ""}`,
-          x: LEFT + 8,
-          y: 82,
-          width: PANEL_WIDTH - 16,
+          text: scrubPlaceholders(ac.educationalPurpose) || "",
+          x: MARGIN,
+          y: 58,
+          width: CONTENT_WIDTH,
           fontSize: 9,
           font: "normal",
           align: "center",
-          fontColor: "#555555",
-          backgroundColor: PANEL_SOFT,
-          padding: 6,
-          radius: 4,
+          fontColor: "#666666",
+          padding: 4,
         });
 
-        // Instructions panel.
+        // ── Instructions box (highlighted) ──
         contentBlocks.push({
           text: scrubPlaceholders(ac.instructions) || "Complete the activity below.",
-          x: LEFT,
-          y: 116,
-          width: PANEL_WIDTH,
-          fontSize: 11,
+          x: MARGIN,
+          y: 88,
+          width: CONTENT_WIDTH,
+          fontSize: 12,
           font: "bold",
           align: "left",
-          fontColor: "#222222",
-          backgroundColor: PANEL,
-          padding: 8,
-          radius: 4,
+          fontColor: "#1a1a1a",
+          backgroundColor: "#F5F5F5",
+          padding: 12,
+          radius: 6,
         });
 
-        // Activity items spread across the full usable height so the lower half
-        // of the page is never left blank. Each item gets its own readable panel.
+        // ── Activity items with generous spacing ──
         const rawItems: string[] = Array.isArray(ac.activityItems) ? ac.activityItems : [];
         const items = rawItems
           .map((it) => scrubPlaceholders(it))
           .filter((it): it is string => !!it && it.trim().length > 0);
-        const ITEMS_TOP = 170;
-        const ITEMS_BOTTOM = PAGE_HEIGHT - 60; // leave room for footer/page number
+
+        const ITEMS_START_Y = 140;
+        const ITEMS_END_Y = PAGE_HEIGHT - 80;
         const itemCount = Math.max(items.length, 1);
-        const slot = (ITEMS_BOTTOM - ITEMS_TOP) / itemCount;
+        const spacing = Math.min((ITEMS_END_Y - ITEMS_START_Y) / itemCount, 120);
+
         items.forEach((item: string, idx: number) => {
+          const yPos = ITEMS_START_Y + idx * spacing;
+
+          // Item number circle + text
+          const numberedItem = `${idx + 1}.  ${item}`;
           contentBlocks.push({
-            text: item,
-            x: LEFT,
-            y: ITEMS_TOP + idx * slot,
-            width: PANEL_WIDTH,
+            text: numberedItem,
+            x: MARGIN,
+            y: yPos,
+            width: CONTENT_WIDTH,
             fontSize: 12,
             font: "normal",
             align: "left",
             fontColor: "#1a1a1a",
-            backgroundColor: PANEL,
-            padding: 8,
-            radius: 4,
+            padding: 10,
+          });
+
+          // Answer line below each item
+          contentBlocks.push({
+            text: "________________________________________",
+            x: MARGIN + 20,
+            y: yPos + 32,
+            width: CONTENT_WIDTH - 40,
+            fontSize: 11,
+            font: "normal",
+            align: "left",
+            fontColor: "#CCCCCC",
           });
         });
 
-        // Labels (section markers) get small white chips for readability too.
-        const labels: Array<{ text: string; x: number; y: number }> = ac.labels || [];
-        labels.forEach((l) => {
-          contentBlocks.push({
-            text: scrubPlaceholders(l.text) || "",
-            x: l.x,
-            y: l.y,
-            width: 160,
-            fontSize: 10,
-            font: "bold",
-            align: "left",
-            fontColor: "#222222",
-            backgroundColor: PANEL_SOFT,
-            padding: 4,
-            radius: 3,
-          });
+        // ── Footer accent bar ──
+        contentBlocks.push({
+          text: `${opts.subject} | ${opts.theme} | ${opts.gradeLevel}`,
+          x: 0,
+          y: PAGE_HEIGHT - 36,
+          width: PAGE_WIDTH,
+          fontSize: 8,
+          font: "normal",
+          align: "center",
+          fontColor: "#FFFFFF",
+          backgroundColor: colors.secondary,
+          padding: 8,
         });
 
         pageContents.push({
-          imageBuffer: buffer,
+          backgroundColor: "#FFFFFF",
           contentBlocks,
           pageNumber: page.pageNumber,
           totalPages: job.totalPages,
@@ -484,7 +420,6 @@ async function finalizeWorkbookPdf(job: GenerationJob): Promise<void> {
 }
 
 export function createWorkbookJob(options: WorkbookOptions): string {
-  // Ensure minimum 5 pages (cover + 4 activity pages)
   const totalPages = Math.max(5, options.pageCount + 1); // +1 for cover
   const job = createJob(
     "workbook",
