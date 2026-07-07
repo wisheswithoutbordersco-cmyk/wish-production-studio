@@ -1,0 +1,27 @@
+{
+  "version": 2,
+  "buildCommand": "pnpm install --frozen-lockfile && pnpm build",
+  "outputDirectory": "dist/public",
+  "installCommand": "pnpm install --frozen-lockfile",
+  "framework": null,
+  "functions": {
+    "server/_core/index.ts": {
+      "runtime": "@vercel/node@5",
+      "maxDuration": 60
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "/server/_core/index.ts"
+    },
+    {
+      "source": "/manus-storage/:path*",
+      "destination": "/server/_core/index.ts"
+    },
+    {
+      "source": "/((?!_next|favicon|assets).*)",
+      "destination": "/index.html"
+    }
+  ]
+}
