@@ -1,17 +1,16 @@
 /**
- * Workbook Generator — v3 (Clean Programmatic Design)
+ * Workbook Generator
  *
  * Strategy:
- * - COVER page: Full-page AI illustration with title overlay (beautiful, eye-catching)
- * - CONTENT pages: NO AI images. Clean white pages with colored header bars,
- *   well-spaced activity items, answer lines, and professional typography.
- *   Looks like a real Canva-designed workbook, not a PowerPoint slide.
+ * - COVER page: Full-page AI illustration with title overlay
+ * - CONTENT pages: Full-page AI illustration (soft/muted) with text overlaid
+ *   inside semi-transparent white panels for readability.
  *
  * This approach produces sellable educational products because:
- * 1. Text is always perfectly readable (black on white, no background noise)
- * 2. Layout is consistent and professional across all pages
+ * 1. Every page has a beautiful themed AI illustration (edge-to-edge)
+ * 2. Text is always perfectly readable (black on white/light panels)
  * 3. Activities have proper spacing for kids to write answers
- * 4. Only the cover uses AI art (where it matters for first impressions)
+ * 4. Placeholder text is scrubbed automatically
  */
 import { buildImagePrompt, generatePageImage, generateContent } from "./shared";
 import { createJob, getJob, updateJob, addPageResult, type GenerationJob, type PageResult } from "../jobs";
@@ -32,22 +31,73 @@ export interface WorkbookOptions {
 const PAGE_WIDTH = 612;
 const PAGE_HEIGHT = 792;
 const MARGIN = 50;
-const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2; // 512
+const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
 
-// Color schemes per theme for the header bars and accents
-const THEME_COLORS: Record<string, { primary: string; secondary: string; accent: string }> = {
-  "Multicultural Kids": { primary: "#2E86AB", secondary: "#A23B72", accent: "#F18F01" },
-  "African Heritage": { primary: "#8B4513", secondary: "#DAA520", accent: "#228B22" },
-  "Caribbean Fun": { primary: "#00BCD4", secondary: "#FF6F00", accent: "#4CAF50" },
-  "Space Adventure": { primary: "#1A237E", secondary: "#7C4DFF", accent: "#00E5FF" },
-  "Ocean Explorer": { primary: "#006064", secondary: "#0097A7", accent: "#00BFA5" },
-  "Jungle Safari": { primary: "#33691E", secondary: "#F57F17", accent: "#795548" },
-  "Dinosaurs": { primary: "#4E342E", secondary: "#FF6F00", accent: "#689F38" },
+const SUBJECT_PROMPTS: Record<string, string[]> = {
+  "Math": [
+    "colorful educational illustration with geometric shapes, counting objects, and number patterns",
+    "playful math activity scene with measuring tools, graphs, and mathematical symbols",
+    "fun arithmetic illustration with groups of themed objects for counting and addition",
+    "geometry exploration scene with various shapes, angles, and spatial patterns",
+    "math word problem illustration showing a real-world scenario with themed characters",
+  ],
+  "Reading": [
+    "cozy reading scene with open books, story characters, and imagination elements",
+    "phonics activity illustration with letter sounds and picture clues",
+    "reading comprehension scene with story elements and setting details",
+    "vocabulary building illustration with labeled objects and word connections",
+    "story sequencing scene with clear beginning, middle, and end visual elements",
+  ],
+  "Writing": [
+    "creative writing inspiration scene with story starters and imagination elements",
+    "handwriting practice illustration with themed decorative borders",
+    "journal writing scene with prompts and creative elements",
+    "letter writing illustration with envelope and friendly message elements",
+    "poetry writing scene with nature elements and creative imagery",
+  ],
+  "Science": [
+    "science exploration illustration with magnifying glass and nature observation",
+    "simple experiment scene with safe lab equipment and discovery elements",
+    "life cycle illustration showing growth stages of a plant or animal",
+    "weather and seasons scene with clouds, sun, rain, and seasonal changes",
+    "animal habitat illustration showing ecosystem with diverse creatures",
+  ],
+  "Social Studies": [
+    "community helpers illustration showing diverse workers in their roles",
+    "map and geography scene with landmarks and exploration elements",
+    "cultural celebration illustration showing diverse traditions",
+    "historical timeline scene with important events and diverse figures",
+    "citizenship and kindness illustration showing children helping community",
+  ],
+  "Art": [
+    "art studio scene with paint brushes, easels, and creative tools",
+    "color mixing illustration showing primary and secondary colors blending",
+    "art history inspired scene with famous art styles",
+    "craft activity illustration with scissors, paper, and creative materials",
+    "pattern and design scene with repeating motifs and symmetry",
+  ],
+  "SEL/Emotions": [
+    "emotions identification scene with diverse children showing different feelings",
+    "friendship and kindness illustration with children cooperating",
+    "self-regulation scene with calming strategies and mindfulness",
+    "growth mindset illustration showing persistence and achievement",
+    "empathy and understanding scene with diverse characters",
+  ],
+  "Back to School": [
+    "first day of school illustration with backpack and excited children",
+    "classroom setup scene with desks, books, and decorations",
+    "school rules illustration with friendly visual reminders",
+    "making friends scene with diverse children introducing themselves",
+    "school supply organization illustration with labeled materials",
+  ],
+  "Summer Review": [
+    "summer learning scene with outdoor activities and educational elements",
+    "vacation journal illustration with travel and discovery themes",
+    "summer reading scene with books and relaxing outdoor setting",
+    "outdoor math illustration with nature counting and patterns",
+    "summer science exploration with insects, plants, and observation",
+  ],
 };
-
-function getColors(theme: string) {
-  return THEME_COLORS[theme] || THEME_COLORS["Multicultural Kids"];
-}
 
 function getThemeModifier(theme: string): string {
   const modifiers: Record<string, string> = {
@@ -153,23 +203,32 @@ async function generateWorkbookPage(pageIndex: number, job: GenerationJob): Prom
   const opts = job.options as WorkbookOptions;
 
   if (pageIndex === 0) {
-    // Cover page — the ONLY page that uses AI image generation
+    // Cover page — full AI illustration
     const coverPrompt = buildImagePrompt({
       subject: `book cover illustration for "${opts.coverTitle || opts.subject + ' Workbook'}", ${getThemeModifier(opts.theme)}`,
-      additionalDetails: `professional educational workbook cover design, vibrant and appealing, ${getGradeLevelModifier(opts.gradeLevel)}, filling the entire canvas edge-to-edge with no borders or frames`,
+      additionalDetails: `professional educational workbook cover design, vibrant and appealing, ${getGradeLevelModifier(opts.gradeLevel)}`,
     });
     const { imageUrl } = await generatePageImage(coverPrompt);
     return { pageNumber: 1, imageUrl, status: "success", metadata: { isCover: true } };
   }
 
-  // Content pages — NO AI image needed. Just generate the activity content.
+  // Activity pages — generate AI background image + GPT content
+  const subjectPrompts = SUBJECT_PROMPTS[opts.subject] || SUBJECT_PROMPTS["Math"];
+  const subjectPrompt = subjectPrompts[(pageIndex - 1) % subjectPrompts.length];
+  const prompt = buildImagePrompt({
+    subject: `${subjectPrompt}, ${getThemeModifier(opts.theme)}`,
+    additionalDetails: `educational activity page illustration with soft muted colors to allow text overlay, ${getGradeLevelModifier(opts.gradeLevel)}, suitable for a ${opts.subject} workbook, the lower 60% should be lighter for text readability`,
+  });
+  const { imageUrl } = await generatePageImage(prompt);
+
+  // Generate educational activity content
   const activityContent = await generateWorkbookActivity(opts, pageIndex - 1);
 
   return {
     pageNumber: pageIndex + 1,
-    imageUrl: "", // No image for content pages
+    imageUrl,
     status: "success",
-    metadata: { activityContent, isContentPage: true },
+    metadata: { activityContent },
   };
 }
 
@@ -213,8 +272,9 @@ async function processWorkbookChunkInternal(job: GenerationJob): Promise<void> {
 }
 
 /**
- * Assemble the workbook PDF with clean programmatic design.
- * Content pages use NO background images — just clean typography and colored accents.
+ * Assemble the workbook PDF with AI backgrounds and readability panels.
+ * Every content page has a full-page AI illustration with text overlaid
+ * inside semi-transparent white panels.
  */
 async function finalizeWorkbookPdf(job: GenerationJob): Promise<void> {
   updateJob(job.id, { statusMessage: "Assembling workbook PDF..." });
@@ -227,13 +287,13 @@ async function finalizeWorkbookPdf(job: GenerationJob): Promise<void> {
 
   try {
     const opts = job.options as WorkbookOptions;
-    const colors = getColors(opts.theme);
     const pageContents: PageContent[] = [];
 
     for (const page of successPages) {
+      const buffer = await fetchImageBuffer(page.imageUrl);
+
       if (page.metadata?.isCover) {
         // Cover page — full AI image with title overlay
-        const buffer = await fetchImageBuffer(page.imageUrl);
         pageContents.push({
           imageBuffer: buffer,
           contentBlocks: [
@@ -259,11 +319,14 @@ async function finalizeWorkbookPdf(job: GenerationJob): Promise<void> {
               font: "normal",
               align: "center",
               fontColor: "#FFFFFF",
+              backgroundColor: "rgba(0,0,0,0.35)",
+              padding: 8,
+              radius: 6,
             },
             {
               text: `Grade: ${opts.gradeLevel}`,
               x: MARGIN,
-              y: 340,
+              y: 355,
               width: CONTENT_WIDTH,
               fontSize: 13,
               font: "normal",
@@ -286,68 +349,71 @@ async function finalizeWorkbookPdf(job: GenerationJob): Promise<void> {
         });
       } else {
         // ═══════════════════════════════════════════════════════════════════
-        // CONTENT PAGE — Clean programmatic design, NO background image
+        // CONTENT PAGE — Full AI background + white readability panels
         // ═══════════════════════════════════════════════════════════════════
         const ac = page.metadata?.activityContent || {};
         const contentBlocks: NonNullable<PageContent["contentBlocks"]> = [];
 
-        // ── Header bar (colored banner across top) ──
+        // ── Title panel at top ──
         contentBlocks.push({
           text: scrubPlaceholders(ac.pageTitle) || "Activity",
-          x: 0,
-          y: 0,
-          width: PAGE_WIDTH,
-          fontSize: 20,
+          x: MARGIN - 10,
+          y: 24,
+          width: CONTENT_WIDTH + 20,
+          fontSize: 18,
           font: "bold",
           align: "center",
-          fontColor: "#FFFFFF",
-          backgroundColor: colors.primary,
-          padding: 18,
+          fontColor: "#1a1a1a",
+          backgroundColor: "rgba(255,255,255,0.92)",
+          padding: 12,
+          radius: 8,
         });
 
-        // ── Educational purpose (subtle line under header) ──
+        // ── Educational purpose ──
         contentBlocks.push({
           text: scrubPlaceholders(ac.educationalPurpose) || "",
           x: MARGIN,
-          y: 58,
+          y: 72,
           width: CONTENT_WIDTH,
           fontSize: 9,
           font: "normal",
           align: "center",
-          fontColor: "#666666",
-          padding: 4,
+          fontColor: "#555555",
+          backgroundColor: "rgba(255,255,255,0.85)",
+          padding: 6,
+          radius: 4,
         });
 
-        // ── Instructions box (highlighted) ──
+        // ── Instructions panel ──
         contentBlocks.push({
           text: scrubPlaceholders(ac.instructions) || "Complete the activity below.",
           x: MARGIN,
-          y: 88,
+          y: 100,
           width: CONTENT_WIDTH,
           fontSize: 12,
           font: "bold",
           align: "left",
           fontColor: "#1a1a1a",
-          backgroundColor: "#F5F5F5",
+          backgroundColor: "rgba(255,255,255,0.93)",
           padding: 12,
           radius: 6,
         });
 
-        // ── Activity items with generous spacing ──
+        // ── Activity items in a large white panel ──
         const rawItems: string[] = Array.isArray(ac.activityItems) ? ac.activityItems : [];
         const items = rawItems
           .map((it) => scrubPlaceholders(it))
           .filter((it): it is string => !!it && it.trim().length > 0);
 
-        const ITEMS_START_Y = 140;
-        const ITEMS_END_Y = PAGE_HEIGHT - 80;
+        // Build all items into one panel for clean readability
+        const ITEMS_START_Y = 148;
         const itemCount = Math.max(items.length, 1);
-        const spacing = Math.min((ITEMS_END_Y - ITEMS_START_Y) / itemCount, 120);
+        const spacing = Math.min(90, (PAGE_HEIGHT - 120 - ITEMS_START_Y) / itemCount);
 
         items.forEach((item: string, idx: number) => {
           const yPos = ITEMS_START_Y + idx * spacing;
 
-          // Item number circle + text
+          // Numbered item with answer line
           const numberedItem = `${idx + 1}.  ${item}`;
           contentBlocks.push({
             text: numberedItem,
@@ -358,38 +424,44 @@ async function finalizeWorkbookPdf(job: GenerationJob): Promise<void> {
             font: "normal",
             align: "left",
             fontColor: "#1a1a1a",
+            backgroundColor: "rgba(255,255,255,0.90)",
             padding: 10,
+            radius: 6,
           });
 
-          // Answer line below each item
+          // Answer line
           contentBlocks.push({
             text: "________________________________________",
             x: MARGIN + 20,
-            y: yPos + 32,
+            y: yPos + 34,
             width: CONTENT_WIDTH - 40,
             fontSize: 11,
             font: "normal",
             align: "left",
-            fontColor: "#CCCCCC",
+            fontColor: "#999999",
+            backgroundColor: "rgba(255,255,255,0.80)",
+            padding: 4,
+            radius: 4,
           });
         });
 
-        // ── Footer accent bar ──
+        // ── Footer info ──
         contentBlocks.push({
           text: `${opts.subject} | ${opts.theme} | ${opts.gradeLevel}`,
-          x: 0,
-          y: PAGE_HEIGHT - 36,
-          width: PAGE_WIDTH,
+          x: MARGIN,
+          y: PAGE_HEIGHT - 40,
+          width: CONTENT_WIDTH,
           fontSize: 8,
           font: "normal",
           align: "center",
-          fontColor: "#FFFFFF",
-          backgroundColor: colors.secondary,
-          padding: 8,
+          fontColor: "#555555",
+          backgroundColor: "rgba(255,255,255,0.85)",
+          padding: 6,
+          radius: 4,
         });
 
         pageContents.push({
-          backgroundColor: "#FFFFFF",
+          imageBuffer: buffer,
           contentBlocks,
           pageNumber: page.pageNumber,
           totalPages: job.totalPages,

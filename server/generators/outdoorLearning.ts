@@ -1,11 +1,10 @@
 /**
- * Outdoor Learning Generator — v3 (Clean Programmatic Design)
+ * Outdoor Learning Generator
  *
  * Strategy:
  * - COVER page: Full-page AI nature scene with title overlay
- * - CONTENT pages: NO AI images. Clean white pages with green nature-themed
- *   header bar, structured sections (Objective, Materials, Steps, Fun Fact),
- *   proper spacing, and professional educational layout.
+ * - CONTENT pages: Full-page AI nature illustration (soft/muted) with text
+ *   overlaid inside semi-transparent white panels for readability.
  */
 import { buildImagePrompt, generatePageImage, generateContent } from "./shared";
 import { createJob, getJob, updateJob, addPageResult, type GenerationJob, type PageResult } from "../jobs";
@@ -25,16 +24,6 @@ const PAGE_WIDTH = 612;
 const PAGE_HEIGHT = 792;
 const MARGIN = 50;
 const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
-
-// Colors for outdoor/nature theme
-const COLORS = {
-  headerBg: "#2E7D32",      // Forest green
-  footerBg: "#1B5E20",      // Dark green
-  sectionBg: "#E8F5E9",     // Light green tint
-  funFactBg: "#FFF8E1",     // Warm yellow
-  textDark: "#1a1a1a",
-  textMuted: "#555555",
-};
 
 const ACTIVITY_THEMES: Record<string, string[]> = {
   "Scavenger Hunt": [
@@ -96,6 +85,19 @@ const ACTIVITY_THEMES: Record<string, string[]> = {
 };
 
 /**
+ * Removes raw AI placeholder text.
+ */
+function scrubPlaceholders(input?: string): string {
+  if (!input || typeof input !== "string") return "";
+  let out = input;
+  out = out.replace(/\[[^\]]*\]/g, " ");
+  out = out.replace(/\((?:[^)]*?(?:insert|picture|image|illustration|photo)[^)]*?)\)/gi, " ");
+  out = out.replace(/\b(?:picture|image|illustration|photo)\s+of\b[^.,;:\n]*/gi, " ");
+  out = out.replace(/\s{2,}/g, " ").trim();
+  return out;
+}
+
+/**
  * Generate structured activity content using GPT.
  */
 async function generateActivityContent(opts: OutdoorLearningOptions, activityIndex: number): Promise<{
@@ -125,7 +127,8 @@ Return a JSON object:
   "funFact": "One interesting nature fact related to this activity"
 }
 
-Keep steps simple, clear, and age-appropriate. Materials should be easy to find outdoors or at home.`;
+Keep steps simple, clear, and age-appropriate. Materials should be easy to find outdoors or at home.
+NEVER include placeholder text like "[Picture of...]" or "(insert image)".`;
 
   const content = await generateContent({
     systemPrompt,
@@ -157,11 +160,11 @@ async function generateOutdoorPage(pageIndex: number, job: GenerationJob): Promi
   const opts = job.options as OutdoorLearningOptions;
 
   if (pageIndex === 0) {
-    // Cover page — ONLY page with AI image
+    // Cover page — full AI nature scene
     const prompt = buildImagePrompt({
       subject: `beautiful ${opts.season} ${opts.biome} landscape scene with children exploring nature, outdoor education themed`,
       culturalVariant: opts.culturalConnection,
-      additionalDetails: `vibrant nature scene, educational and inviting, ${opts.season} season, ${opts.biome} environment, child-friendly outdoor adventure, filling the entire canvas edge-to-edge with no borders or frames`,
+      additionalDetails: `vibrant nature scene, educational and inviting, ${opts.season} season, ${opts.biome} environment, child-friendly outdoor adventure`,
     });
     const { imageUrl } = await generatePageImage(prompt);
     return {
@@ -172,14 +175,26 @@ async function generateOutdoorPage(pageIndex: number, job: GenerationJob): Promi
     };
   }
 
-  // Content pages — NO AI image, just GPT content
+  // Activity pages — AI nature background + GPT content
+  const themes = ACTIVITY_THEMES[opts.activityType] || ACTIVITY_THEMES["Scavenger Hunt"];
+  const theme = themes[(pageIndex - 1) % themes.length];
+
+  const prompt = buildImagePrompt({
+    subject: `${opts.season} ${opts.biome} nature scene illustration related to ${theme}`,
+    culturalVariant: opts.culturalConnection,
+    ageRange: opts.ageRange,
+    additionalDetails: `nature-themed educational illustration, detailed botanical and zoological accuracy, soft muted colors to allow text overlay readability, ${opts.season} season atmosphere`,
+  });
+  const { imageUrl } = await generatePageImage(prompt);
+
+  // Generate structured activity content
   const activityContent = await generateActivityContent(opts, pageIndex - 1);
 
   return {
     pageNumber: pageIndex + 1,
-    imageUrl: "",
+    imageUrl,
     status: "success",
-    metadata: { activityContent, isContentPage: true },
+    metadata: { activityContent },
   };
 }
 
@@ -223,7 +238,7 @@ async function processOutdoorLearningChunkInternal(job: GenerationJob): Promise<
 }
 
 /**
- * Assemble the outdoor learning PDF — clean programmatic design.
+ * Assemble the outdoor learning PDF — AI nature backgrounds + readability panels.
  */
 async function finalizeOutdoorLearningPdf(job: GenerationJob): Promise<void> {
   updateJob(job.id, { statusMessage: "Assembling outdoor learning PDF..." });
@@ -239,9 +254,10 @@ async function finalizeOutdoorLearningPdf(job: GenerationJob): Promise<void> {
     const pageContents: PageContent[] = [];
 
     for (const page of successPages) {
+      const buffer = await fetchImageBuffer(page.imageUrl);
+
       if (page.metadata?.isCover) {
         // Cover page — full AI image with title overlay
-        const buffer = await fetchImageBuffer(page.imageUrl);
         pageContents.push({
           imageBuffer: buffer,
           contentBlocks: [
@@ -261,17 +277,20 @@ async function finalizeOutdoorLearningPdf(job: GenerationJob): Promise<void> {
             {
               text: `${opts.season} | ${opts.biome}`,
               x: MARGIN,
-              y: 310,
+              y: 315,
               width: CONTENT_WIDTH,
               fontSize: 16,
               font: "normal",
               align: "center",
               fontColor: "#FFFFFF",
+              backgroundColor: "rgba(0,0,0,0.35)",
+              padding: 8,
+              radius: 6,
             },
             {
               text: `Ages: ${opts.ageRange}`,
               x: MARGIN,
-              y: 340,
+              y: 358,
               width: CONTENT_WIDTH,
               fontSize: 13,
               font: "normal",
@@ -294,52 +313,55 @@ async function finalizeOutdoorLearningPdf(job: GenerationJob): Promise<void> {
         });
       } else {
         // ═══════════════════════════════════════════════════════════════════
-        // CONTENT PAGE — Clean white background, nature-themed header
+        // CONTENT PAGE — AI nature background + white readability panels
         // ═══════════════════════════════════════════════════════════════════
         const ac = page.metadata?.activityContent || {};
         const contentBlocks: NonNullable<PageContent["contentBlocks"]> = [];
 
-        // ── Green header bar ──
+        // ── Activity name header ──
         contentBlocks.push({
-          text: ac.activityName || "Outdoor Activity",
-          x: 0,
-          y: 0,
-          width: PAGE_WIDTH,
-          fontSize: 20,
+          text: scrubPlaceholders(ac.activityName) || "Outdoor Activity",
+          x: MARGIN - 10,
+          y: 24,
+          width: CONTENT_WIDTH + 20,
+          fontSize: 18,
           font: "bold",
           align: "center",
-          fontColor: "#FFFFFF",
-          backgroundColor: COLORS.headerBg,
-          padding: 18,
+          fontColor: "#1a1a1a",
+          backgroundColor: "rgba(255,255,255,0.93)",
+          padding: 12,
+          radius: 8,
         });
 
         // ── Objective ──
         contentBlocks.push({
-          text: `Objective: ${ac.objective || ""}`,
+          text: `Objective: ${scrubPlaceholders(ac.objective) || ""}`,
           x: MARGIN,
-          y: 60,
+          y: 72,
           width: CONTENT_WIDTH,
-          fontSize: 11,
+          fontSize: 10,
           font: "normal",
           align: "center",
-          fontColor: COLORS.textMuted,
-          padding: 6,
+          fontColor: "#333333",
+          backgroundColor: "rgba(255,255,255,0.88)",
+          padding: 8,
+          radius: 6,
         });
 
         // ── Materials section ──
         const materials: string[] = ac.materials || [];
         const materialsText = "Materials Needed:\n" +
-          (materials.length ? materials.map((m: string) => `  \u2022 ${m}`).join("\n") : "  \u2022 None");
+          (materials.length ? materials.map((m: string) => `  \u2022 ${scrubPlaceholders(m)}`).join("\n") : "  \u2022 None");
         contentBlocks.push({
           text: materialsText,
           x: MARGIN,
-          y: 95,
+          y: 105,
           width: CONTENT_WIDTH,
           fontSize: 11,
           font: "normal",
           align: "left",
-          fontColor: COLORS.textDark,
-          backgroundColor: COLORS.sectionBg,
+          fontColor: "#1a1a1a",
+          backgroundColor: "rgba(255,255,255,0.92)",
           padding: 12,
           radius: 6,
         });
@@ -348,12 +370,12 @@ async function finalizeOutdoorLearningPdf(job: GenerationJob): Promise<void> {
         const steps: string[] = ac.steps || [];
         const stepsText = "Steps:\n" +
           (steps.length
-            ? steps.map((s: string, i: number) => `${i + 1}. ${s}`).join("\n\n")
+            ? steps.map((s: string, i: number) => `${i + 1}. ${scrubPlaceholders(s)}`).join("\n\n")
             : "1. Go outside and explore!");
-        
+
         // Calculate Y position based on materials length
         const materialsHeight = 50 + materials.length * 16;
-        const stepsY = 95 + materialsHeight + 10;
+        const stepsY = 105 + materialsHeight + 10;
 
         contentBlocks.push({
           text: stepsText,
@@ -363,8 +385,8 @@ async function finalizeOutdoorLearningPdf(job: GenerationJob): Promise<void> {
           fontSize: 11,
           font: "normal",
           align: "left",
-          fontColor: COLORS.textDark,
-          backgroundColor: "#FFFFFF",
+          fontColor: "#1a1a1a",
+          backgroundColor: "rgba(255,255,255,0.92)",
           padding: 12,
           radius: 6,
         });
@@ -372,36 +394,37 @@ async function finalizeOutdoorLearningPdf(job: GenerationJob): Promise<void> {
         // ── Fun Fact box at bottom ──
         if (ac.funFact) {
           contentBlocks.push({
-            text: `Fun Fact: ${ac.funFact}`,
+            text: `Fun Fact: ${scrubPlaceholders(ac.funFact)}`,
             x: MARGIN,
             y: PAGE_HEIGHT - 100,
             width: CONTENT_WIDTH,
             fontSize: 10,
             font: "normal",
             align: "center",
-            fontColor: "#5D4037",
-            backgroundColor: COLORS.funFactBg,
+            fontColor: "#3E2723",
+            backgroundColor: "rgba(255,248,225,0.93)",
             padding: 10,
             radius: 6,
           });
         }
 
-        // ── Footer bar ──
+        // ── Footer ──
         contentBlocks.push({
           text: `${opts.activityType} | ${opts.season} | ${opts.biome} | Ages ${opts.ageRange}`,
-          x: 0,
-          y: PAGE_HEIGHT - 36,
-          width: PAGE_WIDTH,
+          x: MARGIN,
+          y: PAGE_HEIGHT - 40,
+          width: CONTENT_WIDTH,
           fontSize: 8,
           font: "normal",
           align: "center",
-          fontColor: "#FFFFFF",
-          backgroundColor: COLORS.footerBg,
-          padding: 8,
+          fontColor: "#555555",
+          backgroundColor: "rgba(255,255,255,0.85)",
+          padding: 6,
+          radius: 4,
         });
 
         pageContents.push({
-          backgroundColor: "#FFFFFF",
+          imageBuffer: buffer,
           contentBlocks,
           pageNumber: page.pageNumber,
           totalPages: job.totalPages,
