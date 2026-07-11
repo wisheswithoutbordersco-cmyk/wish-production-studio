@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
 import { Heart, Sparkles, Loader2, Download, FileText, CheckCircle, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
+import { CustomPromptField } from "@/components/CustomPromptField";
 
 const OCCASIONS = [
   "Birthday", "Mother's Day", "Father's Day", "Graduation",
@@ -23,6 +24,7 @@ const STYLES = [
 ];
 
 export default function CardGenerator() {
+  const [customPrompt, setCustomPrompt] = useState("");
   const [occasion, setOccasion] = useState("Birthday");
   const [style, setStyle] = useState("Watercolor");
   const [message, setMessage] = useState("");
@@ -40,7 +42,7 @@ export default function CardGenerator() {
       const response = await fetch("/api/generate/card", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ occasion, style, message, customDetails }),
+        body: JSON.stringify({ customPrompt: customPrompt.trim() || undefined, occasion, style, message, customDetails }),
       });
 
       if (!response.ok) {
@@ -74,6 +76,12 @@ export default function CardGenerator() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
+          <CustomPromptField
+            value={customPrompt}
+            onChange={setCustomPrompt}
+            disabled={isGenerating}
+          />
+
           <div className="space-y-2">
             <Label>Occasion</Label>
             <Select value={occasion} onValueChange={setOccasion}>
@@ -164,7 +172,7 @@ export default function CardGenerator() {
 
           {result && (
             <div className="space-y-4">
-              <div className="flex items-center gap-2 text-green-500">
+              <div className="flex items-center gap-2 text-white">
                 <CheckCircle className="h-5 w-5" />
                 <span className="text-sm font-medium">Card ready!</span>
               </div>

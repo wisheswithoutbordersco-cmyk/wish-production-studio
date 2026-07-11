@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Wand2, Upload, Loader2, Download, ArrowUpCircle, Paintbrush, Sparkles, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
+import { CustomPromptField } from "@/components/CustomPromptField";
 
 const RESTYLE_OPTIONS = [
   "Watercolor", "Oil Painting", "Pencil Sketch", "Pop Art",
@@ -15,6 +16,7 @@ const RESTYLE_OPTIONS = [
 ];
 
 export default function EnhanceTools() {
+  const [customPrompt, setCustomPrompt] = useState("");
   const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
   const [uploadedImagePreview, setUploadedImagePreview] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -85,7 +87,10 @@ export default function EnhanceTools() {
       const response = await fetch("/api/enhance/upscale", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageUrl: uploadedImageUrl }),
+        body: JSON.stringify({
+          imageUrl: uploadedImageUrl,
+          customPrompt: customPrompt.trim() || undefined,
+        }),
       });
       if (!response.ok) throw new Error("Upscale failed");
       const { imageUrl } = await response.json();
@@ -109,7 +114,11 @@ export default function EnhanceTools() {
       const response = await fetch("/api/enhance/restyle", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageUrl: uploadedImageUrl, style: restyleOption }),
+        body: JSON.stringify({
+          imageUrl: uploadedImageUrl,
+          style: restyleOption,
+          customPrompt: customPrompt.trim() || undefined,
+        }),
       });
       if (!response.ok) throw new Error("Restyle failed");
       const { imageUrl } = await response.json();
@@ -133,7 +142,11 @@ export default function EnhanceTools() {
       const response = await fetch("/api/enhance/reimagine", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ imageUrl: uploadedImageUrl, prompt: reimaginePrompt }),
+        body: JSON.stringify({
+          imageUrl: uploadedImageUrl,
+          prompt: reimaginePrompt,
+          customPrompt: customPrompt.trim() || undefined,
+        }),
       });
       if (!response.ok) throw new Error("Reimagine failed");
       const { imageUrl } = await response.json();
@@ -161,6 +174,12 @@ export default function EnhanceTools() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
+          <CustomPromptField
+            value={customPrompt}
+            onChange={setCustomPrompt}
+            disabled={isUploading || isProcessing}
+          />
+
           {/* Upload Area */}
           <div className="space-y-2">
             <Label>Upload Image</Label>
@@ -247,7 +266,7 @@ export default function EnhanceTools() {
               </div>
               <Button
                 onClick={handleReimagine}
-                disabled={!uploadedImageUrl || !reimaginePrompt || isProcessing}
+                disabled={!uploadedImageUrl || (!reimaginePrompt.trim() && !customPrompt.trim()) || isProcessing}
                 className="w-full"
               >
                 {isProcessing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Sparkles className="h-4 w-4 mr-2" />}

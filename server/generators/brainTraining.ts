@@ -2,7 +2,7 @@
  * Brain Training Generator
  * Generates bilateral coordination, stroke practice, and fine motor skills worksheets.
  */
-import { buildImagePrompt, generatePageImage, processChunk } from "./shared";
+import { buildImagePrompt, generatePageImage, processChunk, resolveCreativeDirection } from "./shared";
 import { createJob, getJob, updateJob, addPageResult, type GenerationJob, type PageResult } from "../jobs";
 import { assemblePdf, fetchImageBuffer, PageContent } from "../pdfAssembly";
 import { storagePut } from "../storage";
@@ -28,6 +28,7 @@ function getActivityInstruction(activityType: string): string {
 }
 
 export interface BrainTrainingOptions {
+  customPrompt?: string;
   activityType: string; // "Bilateral Coordination" | "Stroke Practice" | "Fine Motor"
   theme: string;
   culturalVariant: string;
@@ -92,9 +93,9 @@ async function generateBrainTrainingPage(pageIndex: number, job: GenerationJob):
     : "";
 
   const prompt = buildImagePrompt({
-    subject: `${activityPrompt}, ${difficultyMod}`,
-    theme: opts.theme,
-    culturalVariant: opts.culturalVariant,
+    subject: `${resolveCreativeDirection(opts.customPrompt, activityPrompt)}, ${difficultyMod}`,
+    theme: opts.customPrompt ? undefined : opts.theme,
+    culturalVariant: opts.customPrompt ? undefined : opts.culturalVariant,
     ageRange: opts.ageRange,
     additionalDetails: `black and white line art worksheet design with clear activity paths, no shading, high contrast for printing${mazeConstraint}`,
   });

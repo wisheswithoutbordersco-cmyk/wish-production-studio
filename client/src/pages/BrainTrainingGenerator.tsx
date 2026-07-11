@@ -7,6 +7,7 @@ import { Slider } from "@/components/ui/slider";
 import { GenerationProgress } from "@/components/GenerationProgress";
 import { useGenerationJob } from "@/hooks/useGenerationJob";
 import { Brain, Sparkles } from "lucide-react";
+import { CustomPromptField } from "@/components/CustomPromptField";
 
 const ACTIVITY_TYPES = [
   "Bilateral Coordination",
@@ -29,6 +30,7 @@ const AGE_RANGES = ["3-4", "4-5", "5-6", "6-7", "7-8", "8-10"];
 const DIFFICULTIES = ["Easy", "Medium", "Hard", "Progressive"];
 
 export default function BrainTrainingGenerator() {
+  const [customPrompt, setCustomPrompt] = useState("");
   const [activityType, setActivityType] = useState("Bilateral Coordination");
   const [theme, setTheme] = useState("Animals");
   const [culturalVariant, setCulturalVariant] = useState("None");
@@ -40,6 +42,7 @@ export default function BrainTrainingGenerator() {
 
   const handleGenerate = () => {
     startJob("brain-training", {
+      customPrompt: customPrompt.trim() || undefined,
       activityType,
       theme,
       culturalVariant,
@@ -63,6 +66,12 @@ export default function BrainTrainingGenerator() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
+          <CustomPromptField
+            value={customPrompt}
+            onChange={setCustomPrompt}
+            disabled={isGenerating}
+          />
+
           <div className="space-y-2">
             <Label>Activity Type</Label>
             <Select value={activityType} onValueChange={setActivityType}>

@@ -7,6 +7,7 @@ import { Slider } from "@/components/ui/slider";
 import { GenerationProgress } from "@/components/GenerationProgress";
 import { useGenerationJob } from "@/hooks/useGenerationJob";
 import { Gamepad2, Sparkles } from "lucide-react";
+import { CustomPromptField } from "@/components/CustomPromptField";
 
 const GAME_TYPES = [
   "Trivia Cards",
@@ -50,6 +51,7 @@ const AGE_GROUPS = [
 ];
 
 export default function CulturalGameGenerator() {
+  const [customPrompt, setCustomPrompt] = useState("");
   const [gameType, setGameType] = useState("Trivia Cards");
   const [culturalEdition, setCulturalEdition] = useState("African American Heritage");
   const [occasion, setOccasion] = useState("Family Game Night");
@@ -60,6 +62,7 @@ export default function CulturalGameGenerator() {
 
   const handleGenerate = () => {
     startJob("cultural-game", {
+      customPrompt: customPrompt.trim() || undefined,
       gameType,
       culturalEdition,
       occasion,
@@ -81,6 +84,12 @@ export default function CulturalGameGenerator() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
+          <CustomPromptField
+            value={customPrompt}
+            onChange={setCustomPrompt}
+            disabled={isGenerating}
+          />
+
           <div className="space-y-2">
             <Label>Game Type</Label>
             <Select value={gameType} onValueChange={setGameType}>

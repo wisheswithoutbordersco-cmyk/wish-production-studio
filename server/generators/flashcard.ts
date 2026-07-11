@@ -8,12 +8,13 @@
  * 2. Generate small illustrations for each card
  * 3. Arrange in 2x2 grid with text labels and cutting guides
  */
-import { buildImagePrompt, generatePageImage, generateContent } from "./shared";
+import { buildImagePrompt, generatePageImage, generateContent, resolveCreativeDirection } from "./shared";
 import { createJob, getJob, updateJob, addPageResult, type GenerationJob, type PageResult } from "../jobs";
 import { assemblePdf, fetchImageBuffer, PageContent } from "../pdfAssembly";
 import { storagePut } from "../storage";
 
 export interface FlashcardOptions {
+  customPrompt?: string;
   subject: string;
   languages: string; // "English + Spanish" etc.
   style: string;
@@ -173,9 +174,8 @@ async function generateFlashcardPage(pageIndex: number, job: GenerationJob): Pro
   for (const item of items) {
     const subjectDescriptor = buildCardSubject(opts.subject, item, stylePrompt);
     const prompt = buildImagePrompt({
-      subject: subjectDescriptor,
-      additionalDetails:
-        "single object centered, clean isolated illustration on a plain white background, educational flashcard artwork, simple, bright, and instantly recognizable to a young child",
+      subject: resolveCreativeDirection(opts.customPrompt, subjectDescriptor),
+      additionalDetails: `single object centered, clean isolated illustration on a plain white background, educational flashcard artwork, simple, bright, and instantly recognizable to a young child${opts.customPrompt ? `; this individual card must clearly support the printed learning label "${item}"` : ""}`,
     });
     const { buffer } = await generatePageImage(prompt);
     cardImages.push(buffer.toString("base64"));
@@ -195,7 +195,7 @@ async function generateFlashcardPage(pageIndex: number, job: GenerationJob): Pro
 async function generateCoverPage(job: GenerationJob): Promise<PageResult> {
   const opts = job.options as FlashcardOptions;
   const prompt = buildImagePrompt({
-    subject: `colorful educational flashcard set cover design with playful ${opts.subject.toLowerCase()} themed elements`,
+    subject: resolveCreativeDirection(opts.customPrompt, `colorful educational flashcard set cover design with playful ${opts.subject.toLowerCase()} themed elements`),
     additionalDetails: `vibrant child-friendly cover illustration for a bilingual ${opts.languages} flashcard set, educational and inviting`,
   });
   const { imageUrl } = await generatePageImage(prompt);

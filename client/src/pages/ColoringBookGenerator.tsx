@@ -7,6 +7,7 @@ import { Slider } from "@/components/ui/slider";
 import { Palette, Sparkles } from "lucide-react";
 import { useGenerationJob } from "@/hooks/useGenerationJob";
 import { GenerationProgress } from "@/components/GenerationProgress";
+import { CustomPromptField } from "@/components/CustomPromptField";
 
 const THEMES = [
   "Animals", "Dinosaurs", "Ocean Life", "Space", "Fairy Tales",
@@ -28,6 +29,7 @@ const DETAIL_LEVELS = [
 ];
 
 export default function ColoringBookGenerator() {
+  const [customPrompt, setCustomPrompt] = useState("");
   const [theme, setTheme] = useState("Animals");
   const [ageRange, setAgeRange] = useState("4-6 Preschool");
   const [pageCount, setPageCount] = useState([15]);
@@ -37,6 +39,7 @@ export default function ColoringBookGenerator() {
 
   const handleGenerate = () => {
     startJob("coloring-book", {
+      customPrompt: customPrompt.trim() || undefined,
       theme,
       ageRange,
       pageCount: pageCount[0],
@@ -58,6 +61,12 @@ export default function ColoringBookGenerator() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
+          <CustomPromptField
+            value={customPrompt}
+            onChange={setCustomPrompt}
+            disabled={isGenerating}
+          />
+
           <div className="space-y-2">
             <Label>Theme</Label>
             <Select value={theme} onValueChange={setTheme}>

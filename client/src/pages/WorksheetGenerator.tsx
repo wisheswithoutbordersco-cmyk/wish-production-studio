@@ -7,6 +7,7 @@ import { Slider } from "@/components/ui/slider";
 import { GenerationProgress } from "@/components/GenerationProgress";
 import { useGenerationJob } from "@/hooks/useGenerationJob";
 import { FileText, Sparkles } from "lucide-react";
+import { CustomPromptField } from "@/components/CustomPromptField";
 
 const SUBJECTS = [
   "Math",
@@ -47,6 +48,7 @@ const THEMES = [
 ];
 
 export default function WorksheetGenerator() {
+  const [customPrompt, setCustomPrompt] = useState("");
   const [subject, setSubject] = useState("Math");
   const [specificSkill, setSpecificSkill] = useState("Addition");
   const [gradeLevel, setGradeLevel] = useState("1st Grade");
@@ -67,6 +69,7 @@ export default function WorksheetGenerator() {
 
   const handleGenerate = () => {
     startJob("worksheet", {
+      customPrompt: customPrompt.trim() || undefined,
       subject,
       specificSkill,
       gradeLevel,
@@ -88,6 +91,12 @@ export default function WorksheetGenerator() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
+          <CustomPromptField
+            value={customPrompt}
+            onChange={setCustomPrompt}
+            disabled={isGenerating}
+          />
+
           <div className="space-y-2">
             <Label>Subject</Label>
             <Select value={subject} onValueChange={handleSubjectChange}>

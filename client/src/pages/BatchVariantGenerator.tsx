@@ -8,6 +8,7 @@ import { Slider } from "@/components/ui/slider";
 import { GenerationProgress } from "@/components/GenerationProgress";
 import { useGenerationJob } from "@/hooks/useGenerationJob";
 import { Copy, Sparkles } from "lucide-react";
+import { CustomPromptField } from "@/components/CustomPromptField";
 
 const BASE_PRODUCT_TYPES = [
   "Brain Training",
@@ -35,6 +36,7 @@ const VARIANT_DESCRIPTIONS: Record<string, string> = {
 };
 
 export default function BatchVariantGenerator() {
+  const [customPrompt, setCustomPrompt] = useState("");
   const [baseProductType, setBaseProductType] = useState("Brain Training");
   const [baseConcept, setBaseConcept] = useState("");
   const [variantType, setVariantType] = useState("Cultural");
@@ -44,6 +46,7 @@ export default function BatchVariantGenerator() {
 
   const handleGenerate = () => {
     startJob("batch-variant", {
+      customPrompt: customPrompt.trim() || undefined,
       baseProductType,
       baseConcept,
       variantType,
@@ -64,6 +67,12 @@ export default function BatchVariantGenerator() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
+          <CustomPromptField
+            value={customPrompt}
+            onChange={setCustomPrompt}
+            disabled={isGenerating}
+          />
+
           <div className="space-y-2">
             <Label>Base Product Type</Label>
             <Select value={baseProductType} onValueChange={setBaseProductType}>
@@ -161,7 +170,7 @@ export default function BatchVariantGenerator() {
                     <div key={i} className="flex items-center justify-between text-xs py-1 border-b border-border/50">
                       <span className="text-foreground">{v.variant}</span>
                       <span className={`font-medium ${
-                        v.status === "complete" || v.status === "generating" ? "text-green-500" :
+                        v.status === "complete" || v.status === "generating" ? "text-white" :
                         v.status === "error" ? "text-destructive" : "text-muted-foreground"
                       }`}>
                         {v.status}

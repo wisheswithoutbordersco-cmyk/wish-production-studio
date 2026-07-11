@@ -7,6 +7,7 @@ import { Slider } from "@/components/ui/slider";
 import { GenerationProgress } from "@/components/GenerationProgress";
 import { useGenerationJob } from "@/hooks/useGenerationJob";
 import { Layers, Sparkles } from "lucide-react";
+import { CustomPromptField } from "@/components/CustomPromptField";
 
 const SUBJECTS = [
   "Alphabet",
@@ -49,6 +50,7 @@ const CARD_SIZES = [
 ];
 
 export default function FlashcardGenerator() {
+  const [customPrompt, setCustomPrompt] = useState("");
   const [subject, setSubject] = useState("Animals");
   const [languages, setLanguages] = useState("English + Spanish");
   const [style, setStyle] = useState("Bold and Simple");
@@ -59,6 +61,7 @@ export default function FlashcardGenerator() {
 
   const handleGenerate = () => {
     startJob("flashcard", {
+      customPrompt: customPrompt.trim() || undefined,
       subject,
       languages,
       style,
@@ -80,6 +83,12 @@ export default function FlashcardGenerator() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
+          <CustomPromptField
+            value={customPrompt}
+            onChange={setCustomPrompt}
+            disabled={isGenerating}
+          />
+
           <div className="space-y-2">
             <Label>Subject</Label>
             <Select value={subject} onValueChange={setSubject}>

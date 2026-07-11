@@ -13,15 +13,18 @@ import { fetchImageBuffer } from "../pdfAssembly";
 
 export interface UpscaleOptions {
   imageUrl: string;
+  customPrompt?: string;
 }
 
 export interface RestyleOptions {
   imageUrl: string;
+  customPrompt?: string;
   style: string;
 }
 
 export interface ReimagineOptions {
   imageUrl: string;
+  customPrompt?: string;
   prompt: string;
 }
 
@@ -53,7 +56,7 @@ async function fetchImageAsBase64(imageUrl: string): Promise<{ b64Json: string; 
 export async function enhanceUpscale(options: UpscaleOptions): Promise<{ imageUrl: string }> {
   const { b64Json, mimeType } = await fetchImageAsBase64(options.imageUrl);
   const result = await generateImage({
-    prompt: "enhance this image to higher resolution, sharper details, improved clarity, same composition and content exactly preserved",
+    prompt: options.customPrompt?.trim() || "enhance this image to higher resolution, sharper details, improved clarity, same composition and content exactly preserved",
     originalImages: [{ b64Json, mimeType }],
   });
   if (!result.url) throw new Error("Upscale failed");
@@ -73,7 +76,7 @@ export async function enhanceUpscale(options: UpscaleOptions): Promise<{ imageUr
 export async function enhanceRestyle(options: RestyleOptions): Promise<{ imageUrl: string }> {
   const { b64Json, mimeType } = await fetchImageAsBase64(options.imageUrl);
   const result = await generateImage({
-    prompt: `recreate this image in ${options.style} art style, maintaining the same subject and composition but transforming the visual style completely to ${options.style}`,
+    prompt: options.customPrompt?.trim() || `recreate this image in ${options.style} art style, maintaining the same subject and composition but transforming the visual style completely to ${options.style}`,
     originalImages: [{ b64Json, mimeType }],
   });
   if (!result.url) throw new Error("Restyle failed");
@@ -93,7 +96,7 @@ export async function enhanceRestyle(options: RestyleOptions): Promise<{ imageUr
 export async function enhanceReimagine(options: ReimagineOptions): Promise<{ imageUrl: string }> {
   const { b64Json, mimeType } = await fetchImageAsBase64(options.imageUrl);
   const result = await generateImage({
-    prompt: options.prompt,
+    prompt: options.customPrompt?.trim() || options.prompt,
     originalImages: [{ b64Json, mimeType }],
   });
   if (!result.url) throw new Error("Reimagine failed");

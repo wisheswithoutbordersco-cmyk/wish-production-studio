@@ -3,10 +3,11 @@
  * Generates black-and-white line art pages using chunked generation.
  * Output: multi-page PDF with clean line art suitable for coloring.
  */
-import { generatePageImage, processChunk } from "./shared";
+import { generatePageImage, processChunk, resolveCreativeDirection } from "./shared";
 import { createJob, getJob, type GenerationJob, type PageResult } from "../jobs";
 
 export interface ColoringBookOptions {
+  customPrompt?: string;
   theme: string;
   ageRange: string;
   pageCount: number;
@@ -186,19 +187,26 @@ async function generateColoringPage(pageIndex: number, job: GenerationJob): Prom
     ? ` (scene variation ${Math.floor(pageIndex / subjects.length) + 1}, different composition and background)`
     : "";
   const subject = `${baseSubject}${sceneVariation}`;
+  const creativeSubject = resolveCreativeDirection(
+    opts.customPrompt,
+    subject
+  );
+  const pageDirection = opts.customPrompt
+    ? `${creativeSubject}, unique scene ${pageIndex + 1} with a different composition and supporting elements`
+    : creativeSubject;
 
   const detailPrompt = getDetailLevelPrompt(opts.detailLevel);
   const ageModifier = getAgeModifier(opts.ageRange);
 
   const prompt = [
     "Template",
-    `black and white coloring page of ${subject}`,
+    `black and white coloring page of ${pageDirection}`,
     detailPrompt,
     ageModifier,
     "Every page must be dense and detailed, filling the entire page edge-to-edge with no large empty white areas. Minimum complexity: 50+ distinct elements per page. Each page in the book must be a DIFFERENT scene — no repeated subjects",
     "clean black outlines on pure white background",
     "no shading, no gradients, no gray tones, no color",
-    "professional coloring book quality line art",
+    "ultra detailed, professional coloring book quality line art, print-ready, high resolution, masterful composition",
     "filling the entire canvas edge-to-edge with no blank white space",
     "absolutely no words, letters, numbers, or written text anywhere in the image",
   ].join(", ");

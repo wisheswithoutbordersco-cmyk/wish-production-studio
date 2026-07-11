@@ -61,10 +61,10 @@ export function GenerationProgress({ jobState, isGenerating, progress, onCancel,
           <Loader2 className="h-5 w-5 animate-spin text-primary" />
         )}
         {jobState?.status === "complete" && (
-          <CheckCircle className="h-5 w-5 text-green-500" />
+          <CheckCircle className="h-5 w-5 text-white" />
         )}
         {jobState?.status === "partial" && (
-          <CheckCircle className="h-5 w-5 text-yellow-500" />
+          <CheckCircle className="h-5 w-5 text-neutral-400" />
         )}
         {jobState?.status === "error" && (
           <AlertCircle className="h-5 w-5 text-destructive" />
@@ -144,7 +144,7 @@ export function GenerationProgress({ jobState, isGenerating, progress, onCancel,
           )}
           {saved && (
             <Button variant="secondary" disabled>
-              <CheckCircle className="h-4 w-4 mr-2 text-green-500" />
+              <CheckCircle className="h-4 w-4 mr-2 text-white" />
               Saved
             </Button>
           )}

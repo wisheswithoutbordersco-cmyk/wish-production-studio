@@ -10,12 +10,13 @@
  * - White/semi-transparent text backgrounds for readability on busy patterns
  * - Minimum 8+ pages (cover + instructions + 6+ card pages)
  */
-import { buildImagePrompt, generatePageImage, generateContent } from "./shared";
+import { buildImagePrompt, generatePageImage, generateContent, customPromptInstruction, resolveCreativeDirection } from "./shared";
 import { createJob, getJob, updateJob, addPageResult, type GenerationJob, type PageResult } from "../jobs";
 import { assemblePdf, fetchImageBuffer, PageContent } from "../pdfAssembly";
 import { storagePut } from "../storage";
 
 export interface CulturalGameOptions {
+  customPrompt?: string;
   gameType: string;
   culturalEdition: string;
   occasion: string;
@@ -54,7 +55,7 @@ Occasion: ${opts.occasion}
 Age appropriateness: ${opts.ageAppropriate}
 IMPORTANT: All content must be factually accurate, culturally respectful, and age-appropriate.
 All questions and answers MUST be specifically about ${opts.culturalEdition} culture, traditions, history, food, music, or customs.
-Do NOT generate generic questions — every card must be directly relevant to ${opts.culturalEdition}.`;
+Do NOT generate generic questions — every card must be directly relevant to ${opts.culturalEdition}.${customPromptInstruction(opts.customPrompt)}`;
 
   const userPrompt = `Generate exactly ${batchSize} ${opts.gameType} cards (numbered ${batchStart + 1} to ${batchStart + batchSize}).
 Theme: ${opts.culturalEdition} ${opts.gameType} for ${opts.occasion}
@@ -126,9 +127,9 @@ async function generateCulturalGamePage(pageIndex: number, job: GenerationJob): 
   if (pageIndex === 0) {
     // Cover page
     const bgPrompt = buildImagePrompt({
-      subject: `elegant game box cover design with ornamental cultural patterns and decorative elements`,
-      culturalVariant: opts.culturalEdition,
-      additionalDetails: `rich vibrant colors, ${opts.occasion} themed, premium card game cover art, sophisticated and inviting`,
+      subject: resolveCreativeDirection(opts.customPrompt, "elegant game box cover design with ornamental cultural patterns and decorative elements"),
+      culturalVariant: opts.customPrompt ? undefined : opts.culturalEdition,
+      additionalDetails: `premium card game cover art, sophisticated and inviting${opts.customPrompt ? "" : `, rich vibrant colors, ${opts.occasion} themed`}`,
     });
     const { imageUrl } = await generatePageImage(bgPrompt);
     return {
@@ -142,9 +143,9 @@ async function generateCulturalGamePage(pageIndex: number, job: GenerationJob): 
   if (pageIndex === 1) {
     // How to Play page
     const bgPrompt = buildImagePrompt({
-      subject: `decorative page border with subtle cultural ornamental patterns around the edges, large plain white center area`,
-      culturalVariant: opts.culturalEdition,
-      additionalDetails: `elegant frame design, the center 80% must be plain white for text readability, ${opts.occasion} themed`,
+      subject: resolveCreativeDirection(opts.customPrompt, "decorative page border with subtle cultural ornamental patterns around the edges, large plain white center area"),
+      culturalVariant: opts.customPrompt ? undefined : opts.culturalEdition,
+      additionalDetails: `elegant frame design, the center 80% must be plain white for text readability${opts.customPrompt ? "" : `, ${opts.occasion} themed`}`,
     });
     const { imageUrl } = await generatePageImage(bgPrompt);
     const instructions = await generateHowToPlay(opts);
@@ -166,9 +167,9 @@ async function generateCulturalGamePage(pageIndex: number, job: GenerationJob): 
 
   // Generate decorative background
   const bgPrompt = buildImagePrompt({
-    subject: `decorative card background pattern with ornamental border design suitable for a ${opts.gameType} game card`,
-    culturalVariant: opts.culturalEdition,
-    additionalDetails: `elegant repeating pattern, rich colors, ${opts.occasion} themed, suitable as a card back or decorative frame, the card content area in the center must be light/white so text is readable`,
+    subject: resolveCreativeDirection(opts.customPrompt, `decorative card background pattern with ornamental border design suitable for a ${opts.gameType} game card`),
+    culturalVariant: opts.customPrompt ? undefined : opts.culturalEdition,
+    additionalDetails: `elegant repeating pattern suitable as a card back or decorative frame, the card content area in the center must be light/white so text is readable${opts.customPrompt ? "" : `, rich colors, ${opts.occasion} themed`}`,
   });
   const { imageUrl } = await generatePageImage(bgPrompt);
 

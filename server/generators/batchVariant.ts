@@ -12,6 +12,7 @@ import { createOutdoorLearningJob, processOutdoorLearningChunk } from "./outdoor
 import { createTherapeuticActivityJob, processTherapeuticActivityChunk } from "./therapeuticActivity";
 
 export interface BatchVariantOptions {
+  customPrompt?: string;
   baseProductType: string;
   baseConcept: string;
   variantType: string; // "Cultural" | "Theme" | "Age" | "Difficulty" | "Seasonal"
@@ -95,12 +96,17 @@ export async function processBatchVariantChunk(batchId: string): Promise<void> {
 
   // Create a sub-job for this variant based on the base product type
   const opts = batch.options;
+  const trimmedCustomPrompt = opts.customPrompt?.trim();
+  const variantCustomPrompt = trimmedCustomPrompt
+    ? `${trimmedCustomPrompt}\nCreate this as the ${variant} ${opts.variantType.toLowerCase()} variant.`
+    : undefined;
   let subJobId: string;
 
   try {
     switch (opts.baseProductType) {
       case "Brain Training":
         subJobId = createBrainTrainingJob({
+          customPrompt: variantCustomPrompt,
           activityType: "Bilateral Coordination",
           theme: opts.variantType === "Theme" ? variant : "Animals",
           culturalVariant: opts.variantType === "Cultural" ? variant : "None",
@@ -113,6 +119,7 @@ export async function processBatchVariantChunk(batchId: string): Promise<void> {
 
       case "Cultural Game":
         subJobId = createCulturalGameJob({
+          customPrompt: variantCustomPrompt,
           gameType: "Trivia Cards",
           culturalEdition: opts.variantType === "Cultural" ? variant : "General Knowledge",
           occasion: "Family Game Night",
@@ -124,6 +131,7 @@ export async function processBatchVariantChunk(batchId: string): Promise<void> {
 
       case "Flashcard":
         subJobId = createFlashcardJob({
+          customPrompt: variantCustomPrompt,
           subject: "Animals",
           languages: "English + Spanish",
           style: "Bold and Simple",
@@ -135,6 +143,7 @@ export async function processBatchVariantChunk(batchId: string): Promise<void> {
 
       case "Worksheet":
         subJobId = createWorksheetJob({
+          customPrompt: variantCustomPrompt,
           subject: "Math",
           specificSkill: "Addition",
           gradeLevel: opts.variantType === "Age" ? variant : "1st",
@@ -146,6 +155,7 @@ export async function processBatchVariantChunk(batchId: string): Promise<void> {
 
       case "Outdoor Learning":
         subJobId = createOutdoorLearningJob({
+          customPrompt: variantCustomPrompt,
           activityType: "Scavenger Hunt",
           season: opts.variantType === "Seasonal" ? variant : "All Seasons",
           biome: "Backyard",
@@ -158,6 +168,7 @@ export async function processBatchVariantChunk(batchId: string): Promise<void> {
 
       case "Therapeutic Activity":
         subJobId = createTherapeuticActivityJob({
+          customPrompt: variantCustomPrompt,
           activityType: "Visual Schedule",
           target: "General Self-Regulation",
           representation: opts.variantType === "Cultural" ? `${variant} American` : "Mixed/Diverse",
@@ -169,6 +180,7 @@ export async function processBatchVariantChunk(batchId: string): Promise<void> {
 
       default:
         subJobId = createBrainTrainingJob({
+          customPrompt: variantCustomPrompt,
           activityType: "Bilateral Coordination",
           theme: variant,
           culturalVariant: "None",

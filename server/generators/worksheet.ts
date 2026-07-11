@@ -6,7 +6,7 @@
  * - CONTENT pages: Full-page AI decorative border/frame with text overlaid
  *   inside semi-transparent white panels for readability.
  */
-import { buildImagePrompt, generatePageImage, generateContent } from "./shared";
+import { buildImagePrompt, generatePageImage, generateContent, customPromptInstruction, resolveCreativeDirection } from "./shared";
 import { createJob, getJob, updateJob, addPageResult, type GenerationJob, type PageResult } from "../jobs";
 import { assemblePdf, fetchImageBuffer, PageContent } from "../pdfAssembly";
 import { storagePut } from "../storage";
@@ -17,6 +17,7 @@ const MARGIN = 50;
 const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
 
 export interface WorksheetOptions {
+  customPrompt?: string;
   subject: string;
   specificSkill: string;
   gradeLevel: string;
@@ -77,7 +78,7 @@ async function generateWorksheetContent(opts: WorksheetOptions, pageVariant: num
   const activityType = ACTIVITY_TYPES[pageVariant % ACTIVITY_TYPES.length];
 
   const systemPrompt = `You are an expert elementary school teacher creating engaging, age-appropriate educational worksheets.
-Your worksheets are clear, encouraging, and perfectly matched to the student's level.`;
+Your worksheets are clear, encouraging, and perfectly matched to the student's level.${customPromptInstruction(opts.customPrompt)}`;
 
   const userPrompt = `Create worksheet content for:
 - Subject: ${opts.subject}
@@ -137,8 +138,8 @@ async function generateWorksheetPage(pageIndex: number, job: GenerationJob): Pro
   if (pageIndex === 0) {
     // Cover page — full AI image
     const prompt = buildImagePrompt({
-      subject: `colorful educational workbook cover with ${opts.subject.toLowerCase()} themed elements and decorative patterns`,
-      theme: opts.theme,
+      subject: resolveCreativeDirection(opts.customPrompt, `colorful educational workbook cover with ${opts.subject.toLowerCase()} themed elements and decorative patterns`),
+      theme: opts.customPrompt ? undefined : opts.theme,
       additionalDetails: `professional educational worksheet cover design, vibrant and appealing for ${opts.gradeLevel} students, child-friendly`,
     });
     const { imageUrl } = await generatePageImage(prompt);
@@ -152,8 +153,8 @@ async function generateWorksheetPage(pageIndex: number, job: GenerationJob): Pro
 
   // Content pages — AI decorative border + GPT content
   const prompt = buildImagePrompt({
-    subject: `decorative page border and frame design for a ${opts.subject} ${opts.specificSkill} worksheet`,
-    theme: opts.theme,
+    subject: resolveCreativeDirection(opts.customPrompt, `decorative page border and frame design for a ${opts.subject} ${opts.specificSkill} worksheet`),
+    theme: opts.customPrompt ? undefined : opts.theme,
     additionalDetails: `elegant border frame with themed decorative elements ONLY around the outer edges of the page, the center 70% of the page must be completely plain white with no illustrations, suitable for ${opts.gradeLevel} grade level educational worksheet, print-ready`,
   });
   const { imageUrl } = await generatePageImage(prompt);

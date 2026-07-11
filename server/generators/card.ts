@@ -6,8 +6,10 @@
 import { generateImage } from "../_core/imageGeneration";
 import { assemblePdf, fetchImageBuffer, PageContent } from "../pdfAssembly";
 import { storagePut } from "../storage";
+import { resolveCreativeDirection } from "./shared";
 
 export interface CardOptions {
+  customPrompt?: string;
   occasion: string;
   style: string;
   message?: string;
@@ -20,10 +22,10 @@ export interface CardFromImageOptions {
 }
 
 function buildCardPrompt(options: CardOptions): string {
+  const fallbackDirection = `beautiful greeting card illustration for ${options.occasion}, art style: ${options.style}`;
   const parts = [
     "Template",
-    `beautiful greeting card illustration for ${options.occasion}`,
-    `art style: ${options.style}`,
+    resolveCreativeDirection(options.customPrompt, fallbackDirection),
     "warm inviting design suitable for a greeting card front",
   ];
 
@@ -33,7 +35,7 @@ function buildCardPrompt(options: CardOptions): string {
 
   parts.push("filling the entire canvas edge-to-edge with no borders, frames, shadows, or text of any kind");
   parts.push("absolutely no words, letters, numbers, or written text anywhere in the image");
-  parts.push("vibrant colors, professional quality illustration");
+  parts.push("ultra detailed, professional quality, print-ready, high resolution, masterful composition");
 
   return parts.join(", ");
 }

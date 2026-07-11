@@ -12,12 +12,13 @@
  * 3. Activities have proper spacing for kids to write answers
  * 4. Placeholder text is scrubbed automatically
  */
-import { buildImagePrompt, generatePageImage, generateContent } from "./shared";
+import { buildImagePrompt, generatePageImage, generateContent, customPromptInstruction, resolveCreativeDirection } from "./shared";
 import { createJob, getJob, updateJob, addPageResult, type GenerationJob, type PageResult } from "../jobs";
 import { assemblePdf, fetchImageBuffer, PageContent } from "../pdfAssembly";
 import { storagePut } from "../storage";
 
 export interface WorkbookOptions {
+  customPrompt?: string;
   subject: string;
   gradeLevel: string;
   pageCount: number;
@@ -150,7 +151,7 @@ async function generateWorkbookActivity(opts: WorkbookOptions, pageIndex: number
   const systemPrompt = `You are an expert educator creating engaging workbook activities for ${opts.gradeLevel} students.
 Subject: ${opts.subject}. Theme: ${opts.theme}.
 Each activity must be educational, age-appropriate, and clearly structured.
-Activities must be completable with pencil and paper only.`;
+Activities must be completable with pencil and paper only.${customPromptInstruction(opts.customPrompt)}`;
 
   const userPrompt = `Create a workbook activity page (page ${pageIndex + 1}) for:
 - Subject: ${opts.subject}
@@ -205,7 +206,10 @@ async function generateWorkbookPage(pageIndex: number, job: GenerationJob): Prom
   if (pageIndex === 0) {
     // Cover page — full AI illustration
     const coverPrompt = buildImagePrompt({
-      subject: `book cover illustration for "${opts.coverTitle || opts.subject + ' Workbook'}", ${getThemeModifier(opts.theme)}`,
+      subject: resolveCreativeDirection(
+        opts.customPrompt,
+        `book cover illustration for "${opts.coverTitle || opts.subject + ' Workbook'}", ${getThemeModifier(opts.theme)}`
+      ),
       additionalDetails: `professional educational workbook cover design, vibrant and appealing, ${getGradeLevelModifier(opts.gradeLevel)}`,
     });
     const { imageUrl } = await generatePageImage(coverPrompt);
@@ -216,8 +220,8 @@ async function generateWorkbookPage(pageIndex: number, job: GenerationJob): Prom
   const subjectPrompts = SUBJECT_PROMPTS[opts.subject] || SUBJECT_PROMPTS["Math"];
   const subjectPrompt = subjectPrompts[(pageIndex - 1) % subjectPrompts.length];
   const prompt = buildImagePrompt({
-    subject: `${subjectPrompt}, ${getThemeModifier(opts.theme)}`,
-    additionalDetails: `educational activity page illustration with soft muted colors to allow text overlay, ${getGradeLevelModifier(opts.gradeLevel)}, suitable for a ${opts.subject} workbook, the lower 60% should be lighter for text readability`,
+    subject: resolveCreativeDirection(opts.customPrompt, `${subjectPrompt}, ${getThemeModifier(opts.theme)}`),
+    additionalDetails: `educational activity page illustration with soft muted colors to allow text overlay, ${getGradeLevelModifier(opts.gradeLevel)}, suitable for an educational workbook, the lower 60% should be lighter for text readability`,
   });
   const { imageUrl } = await generatePageImage(prompt);
 

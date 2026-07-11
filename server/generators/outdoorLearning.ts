@@ -6,12 +6,13 @@
  * - CONTENT pages: Full-page AI nature illustration (soft/muted) with text
  *   overlaid inside semi-transparent white panels for readability.
  */
-import { buildImagePrompt, generatePageImage, generateContent } from "./shared";
+import { buildImagePrompt, generatePageImage, generateContent, customPromptInstruction, resolveCreativeDirection } from "./shared";
 import { createJob, getJob, updateJob, addPageResult, type GenerationJob, type PageResult } from "../jobs";
 import { assemblePdf, fetchImageBuffer, PageContent } from "../pdfAssembly";
 import { storagePut } from "../storage";
 
 export interface OutdoorLearningOptions {
+  customPrompt?: string;
   activityType: string;
   season: string;
   biome: string;
@@ -113,7 +114,7 @@ async function generateActivityContent(opts: OutdoorLearningOptions, activityInd
   const systemPrompt = `You are an outdoor education expert creating engaging nature-based learning activities for children.
 Activities should be safe, educational, and appropriate for ${opts.ageRange}.
 Season: ${opts.season}. Biome/environment: ${opts.biome}.
-${opts.culturalConnection && opts.culturalConnection !== "None" ? `Include ${opts.culturalConnection} cultural connections where appropriate.` : ""}`;
+${opts.culturalConnection && opts.culturalConnection !== "None" ? `Include ${opts.culturalConnection} cultural connections where appropriate.` : ""}${customPromptInstruction(opts.customPrompt)}`;
 
   const userPrompt = `Create a structured outdoor learning activity about: ${theme}
 Season: ${opts.season}, Environment: ${opts.biome}, Ages: ${opts.ageRange}
@@ -162,9 +163,9 @@ async function generateOutdoorPage(pageIndex: number, job: GenerationJob): Promi
   if (pageIndex === 0) {
     // Cover page — full AI nature scene
     const prompt = buildImagePrompt({
-      subject: `beautiful ${opts.season} ${opts.biome} landscape scene with children exploring nature, outdoor education themed`,
-      culturalVariant: opts.culturalConnection,
-      additionalDetails: `vibrant nature scene, educational and inviting, ${opts.season} season, ${opts.biome} environment, child-friendly outdoor adventure`,
+      subject: resolveCreativeDirection(opts.customPrompt, `beautiful ${opts.season} ${opts.biome} landscape scene with children exploring nature, outdoor education themed`),
+      culturalVariant: opts.customPrompt ? undefined : opts.culturalConnection,
+      additionalDetails: `vibrant nature scene, educational and inviting, child-friendly outdoor adventure${opts.customPrompt ? "" : `, ${opts.season} season, ${opts.biome} environment`}`,
     });
     const { imageUrl } = await generatePageImage(prompt);
     return {
@@ -180,10 +181,10 @@ async function generateOutdoorPage(pageIndex: number, job: GenerationJob): Promi
   const theme = themes[(pageIndex - 1) % themes.length];
 
   const prompt = buildImagePrompt({
-    subject: `${opts.season} ${opts.biome} nature scene illustration related to ${theme}`,
-    culturalVariant: opts.culturalConnection,
+    subject: resolveCreativeDirection(opts.customPrompt, `${opts.season} ${opts.biome} nature scene illustration related to ${theme}`),
+    culturalVariant: opts.customPrompt ? undefined : opts.culturalConnection,
     ageRange: opts.ageRange,
-    additionalDetails: `nature-themed educational illustration, detailed botanical and zoological accuracy, soft muted colors to allow text overlay readability, ${opts.season} season atmosphere`,
+    additionalDetails: `nature-themed educational illustration, detailed botanical and zoological accuracy, soft muted colors to allow text overlay readability${opts.customPrompt ? "" : `, ${opts.season} season atmosphere`}`,
   });
   const { imageUrl } = await generatePageImage(prompt);
 

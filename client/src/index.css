@@ -43,84 +43,57 @@
   --font-sans: "Inter", system-ui, sans-serif;
 }
 
-/* Dark theme with gold accents - Production Studio branding */
-:root {
-  --radius: 0.625rem;
-  --primary: oklch(0.75 0.12 85);
-  --primary-foreground: oklch(0.15 0.02 85);
-  --sidebar-primary: oklch(0.75 0.12 85);
-  --sidebar-primary-foreground: oklch(0.15 0.02 85);
-  --chart-1: oklch(0.75 0.12 85);
-  --chart-2: oklch(0.65 0.1 85);
-  --chart-3: oklch(0.55 0.08 85);
-  --chart-4: oklch(0.45 0.06 85);
-  --chart-5: oklch(0.35 0.04 85);
-  --background: oklch(0.13 0.005 260);
-  --foreground: oklch(0.92 0.005 85);
-  --card: oklch(0.17 0.007 260);
-  --card-foreground: oklch(0.92 0.005 85);
-  --popover: oklch(0.17 0.007 260);
-  --popover-foreground: oklch(0.92 0.005 85);
-  --secondary: oklch(0.22 0.008 260);
-  --secondary-foreground: oklch(0.85 0.005 85);
-  --muted: oklch(0.22 0.008 260);
-  --muted-foreground: oklch(0.65 0.01 260);
-  --accent: oklch(0.22 0.008 260);
-  --accent-foreground: oklch(0.92 0.005 85);
-  --destructive: oklch(0.6 0.2 25);
-  --destructive-foreground: oklch(0.98 0 0);
-  --border: oklch(1 0 0 / 12%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.75 0.12 85);
-  --sidebar: oklch(0.15 0.006 260);
-  --sidebar-foreground: oklch(0.92 0.005 85);
-  --sidebar-accent: oklch(0.22 0.008 260);
-  --sidebar-accent-foreground: oklch(0.92 0.005 85);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.75 0.12 85);
-}
-
+/* Oracle-style monochrome theme: pure black, white, and restrained grayscale. */
+:root,
 .dark {
-  --primary: oklch(0.75 0.12 85);
-  --primary-foreground: oklch(0.15 0.02 85);
-  --sidebar-primary: oklch(0.75 0.12 85);
-  --sidebar-primary-foreground: oklch(0.15 0.02 85);
-  --background: oklch(0.13 0.005 260);
-  --foreground: oklch(0.92 0.005 85);
-  --card: oklch(0.17 0.007 260);
-  --card-foreground: oklch(0.92 0.005 85);
-  --popover: oklch(0.17 0.007 260);
-  --popover-foreground: oklch(0.92 0.005 85);
-  --secondary: oklch(0.22 0.008 260);
-  --secondary-foreground: oklch(0.85 0.005 85);
-  --muted: oklch(0.22 0.008 260);
-  --muted-foreground: oklch(0.65 0.01 260);
-  --accent: oklch(0.22 0.008 260);
-  --accent-foreground: oklch(0.92 0.005 85);
-  --destructive: oklch(0.6 0.2 25);
-  --destructive-foreground: oklch(0.98 0 0);
-  --border: oklch(1 0 0 / 12%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.75 0.12 85);
-  --chart-1: oklch(0.75 0.12 85);
-  --chart-2: oklch(0.65 0.1 85);
-  --chart-3: oklch(0.55 0.08 85);
-  --chart-4: oklch(0.45 0.06 85);
-  --chart-5: oklch(0.35 0.04 85);
-  --sidebar: oklch(0.15 0.006 260);
-  --sidebar-foreground: oklch(0.92 0.005 85);
-  --sidebar-accent: oklch(0.22 0.008 260);
-  --sidebar-accent-foreground: oklch(0.92 0.005 85);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.75 0.12 85);
+  color-scheme: dark;
+  --radius: 0.625rem;
+  --background: #000000;
+  --foreground: #ffffff;
+  --card: #000000;
+  --card-foreground: #ffffff;
+  --popover: #080808;
+  --popover-foreground: #ffffff;
+  --primary: #ffffff;
+  --primary-foreground: #000000;
+  --secondary: #111111;
+  --secondary-foreground: #ffffff;
+  --muted: #0a0a0a;
+  --muted-foreground: #a3a3a3;
+  --accent: #171717;
+  --accent-foreground: #ffffff;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --border: #222222;
+  --input: #2a2a2a;
+  --ring: #ffffff;
+  --chart-1: #ffffff;
+  --chart-2: #d4d4d4;
+  --chart-3: #a3a3a3;
+  --chart-4: #737373;
+  --chart-5: #404040;
+  --sidebar: #000000;
+  --sidebar-foreground: #ffffff;
+  --sidebar-primary: #ffffff;
+  --sidebar-primary-foreground: #000000;
+  --sidebar-accent: #171717;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #222222;
+  --sidebar-ring: #ffffff;
 }
 
 @layer base {
   * {
     @apply border-border outline-ring/50;
   }
+  html,
+  body,
+  #root {
+    min-height: 100%;
+    background: #000000;
+  }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground antialiased;
   }
   button:not(:disabled),
   [role="button"]:not([aria-disabled="true"]),

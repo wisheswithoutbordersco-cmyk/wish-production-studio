@@ -7,6 +7,7 @@ import { Slider } from "@/components/ui/slider";
 import { GenerationProgress } from "@/components/GenerationProgress";
 import { useGenerationJob } from "@/hooks/useGenerationJob";
 import { TreePine, Sparkles } from "lucide-react";
+import { CustomPromptField } from "@/components/CustomPromptField";
 
 const ACTIVITY_TYPES = [
   "Scavenger Hunt",
@@ -45,6 +46,7 @@ const CULTURAL_CONNECTIONS = [
 ];
 
 export default function OutdoorLearningGenerator() {
+  const [customPrompt, setCustomPrompt] = useState("");
   const [activityType, setActivityType] = useState("Scavenger Hunt");
   const [season, setSeason] = useState("All Seasons");
   const [biome, setBiome] = useState("Backyard");
@@ -56,6 +58,7 @@ export default function OutdoorLearningGenerator() {
 
   const handleGenerate = () => {
     startJob("outdoor-learning", {
+      customPrompt: customPrompt.trim() || undefined,
       activityType,
       season,
       biome,
@@ -78,6 +81,12 @@ export default function OutdoorLearningGenerator() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
+          <CustomPromptField
+            value={customPrompt}
+            onChange={setCustomPrompt}
+            disabled={isGenerating}
+          />
+
           <div className="space-y-2">
             <Label>Activity Type</Label>
             <Select value={activityType} onValueChange={setActivityType}>

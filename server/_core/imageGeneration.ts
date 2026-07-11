@@ -25,6 +25,8 @@ const FAL_IMAGE_ENDPOINT = "https://fal.run/fal-ai/flux-pro/v1.1-ultra";
 const MAX_RETRIES = 3;
 const BASE_RETRY_DELAY_MS = 1_000;
 const MAX_RETRY_DELAY_MS = 15_000;
+const PRINT_QUALITY_SUFFIX =
+  "ultra detailed, professional quality, print-ready, high resolution, masterful composition";
 
 const sleep = (ms: number) =>
   new Promise<void>(resolve => setTimeout(resolve, ms));
@@ -65,6 +67,13 @@ export async function generateImage(
     throw new Error("FAL_KEY is not configured");
   }
 
+  const prompt = `${options.prompt.trim()}\n\nQuality requirements: ${PRINT_QUALITY_SUFFIX}.`;
+  const sourceImage = options.originalImages?.[0];
+  const imageUrl = sourceImage?.url ?? (
+    sourceImage?.b64Json
+      ? `data:${sourceImage.mimeType ?? "image/png"};base64,${sourceImage.b64Json}`
+      : undefined
+  );
   let lastError: unknown;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -77,10 +86,13 @@ export async function generateImage(
           Authorization: `Key ${ENV.falKey}`,
         },
         body: JSON.stringify({
-          prompt: options.prompt,
+          prompt,
           num_images: 1,
-          image_size: "square_hd",
+          aspect_ratio: "1:1",
           output_format: "png",
+          enhance_prompt: true,
+          raw: false,
+          ...(imageUrl ? { image_url: imageUrl, image_prompt_strength: 0.85 } : {}),
         }),
       });
 

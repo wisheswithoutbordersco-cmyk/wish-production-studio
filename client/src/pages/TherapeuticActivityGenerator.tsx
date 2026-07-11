@@ -7,6 +7,7 @@ import { Slider } from "@/components/ui/slider";
 import { GenerationProgress } from "@/components/GenerationProgress";
 import { useGenerationJob } from "@/hooks/useGenerationJob";
 import { Heart, Sparkles } from "lucide-react";
+import { CustomPromptField } from "@/components/CustomPromptField";
 
 const ACTIVITY_TYPES = [
   "Visual Schedule",
@@ -42,6 +43,7 @@ const REPRESENTATIONS = [
 const AGE_RANGES = ["3-5", "5-7", "7-9", "9-12", "13+"];
 
 export default function TherapeuticActivityGenerator() {
+  const [customPrompt, setCustomPrompt] = useState("");
   const [activityType, setActivityType] = useState("Visual Schedule");
   const [target, setTarget] = useState("General Self-Regulation");
   const [representation, setRepresentation] = useState("Mixed/Diverse");
@@ -52,6 +54,7 @@ export default function TherapeuticActivityGenerator() {
 
   const handleGenerate = () => {
     startJob("therapeutic-activity", {
+      customPrompt: customPrompt.trim() || undefined,
       activityType,
       target,
       representation,
@@ -73,6 +76,12 @@ export default function TherapeuticActivityGenerator() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
+          <CustomPromptField
+            value={customPrompt}
+            onChange={setCustomPrompt}
+            disabled={isGenerating}
+          />
+
           <div className="space-y-2">
             <Label>Activity Type</Label>
             <Select value={activityType} onValueChange={setActivityType}>

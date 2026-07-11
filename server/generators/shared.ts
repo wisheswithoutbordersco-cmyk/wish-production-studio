@@ -14,6 +14,34 @@ import { createJob, getJob, updateJob, addPageResult, type GenerationJob, type P
 export const PAGES_PER_CHUNK = 2;
 
 /**
+ * Returns the user's custom creative brief when supplied, otherwise the
+ * generator's existing dropdown-derived direction.
+ */
+export function resolveCreativeDirection(
+  customPrompt: string | undefined,
+  fallback: string
+): string {
+  return customPrompt?.trim() || fallback;
+}
+
+/**
+ * Formats a custom brief for LLM prompts while making it explicit that
+ * required output schemas, page structure, readability, and safety rules
+ * still apply.
+ */
+export function customPromptInstruction(customPrompt?: string): string {
+  const prompt = customPrompt?.trim();
+  if (!prompt) return "";
+
+  return `\n\nPRIMARY CREATIVE DIRECTION (override dropdown-derived themes and topics):\n${prompt}\nFollow this creative direction while preserving every required output format, page structure, readability, age-appropriateness, and safety constraint above.`;
+}
+
+export function normalizeCustomPrompt(customPrompt?: string): string | undefined {
+  const prompt = customPrompt?.trim();
+  return prompt || undefined;
+}
+
+/**
  * Builds an image prompt that enforces:
  * 1. NO text in the image
  * 2. Edge-to-edge design (fills entire canvas)
@@ -73,10 +101,11 @@ export function buildImagePrompt(params: {
     parts.push(params.additionalDetails);
   }
 
-  // Enforce NO TEXT and edge-to-edge
+  // Enforce NO TEXT, edge-to-edge, and production quality
   parts.push("filling the entire canvas edge-to-edge with no borders, frames, shadows, or text of any kind");
   parts.push("absolutely no words, letters, numbers, or written text anywhere in the image");
   parts.push("flat graphic design illustration");
+  parts.push("ultra detailed, professional quality, print-ready, high resolution, masterful composition");
 
   return parts.join(", ");
 }

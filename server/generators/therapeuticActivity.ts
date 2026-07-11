@@ -10,12 +10,13 @@
  * All pages use calming pastel colors and soothing design appropriate for
  * children with various therapeutic needs (ADHD, ASD, Anxiety, etc.)
  */
-import { buildImagePrompt, generatePageImage, generateContent } from "./shared";
+import { buildImagePrompt, generatePageImage, generateContent, customPromptInstruction, resolveCreativeDirection } from "./shared";
 import { createJob, getJob, updateJob, addPageResult, type GenerationJob, type PageResult } from "../jobs";
 import { assemblePdf, fetchImageBuffer, PageContent } from "../pdfAssembly";
 import { storagePut } from "../storage";
 
 export interface TherapeuticActivityOptions {
+  customPrompt?: string;
   activityType: string;
   target: string;
   representation: string;
@@ -141,7 +142,7 @@ async function generateTherapeuticContent(opts: TherapeuticActivityOptions, acti
 Target population: ${opts.target}
 Age range: ${opts.ageRange}
 Activity type: ${opts.activityType}
-All activities must be evidence-based, safe, and developmentally appropriate.`;
+All activities must be evidence-based, safe, and developmentally appropriate.${customPromptInstruction(opts.customPrompt)}`;
 
   const userPrompt = `Create a structured therapeutic activity related to: ${theme}
 For: ${opts.target}, ages ${opts.ageRange}
@@ -188,7 +189,7 @@ NEVER include placeholder text like "[Picture of...]" or "(insert image)".`;
  * Generate "How to Use This Resource" content.
  */
 async function generateHowToUse(opts: TherapeuticActivityOptions): Promise<string[]> {
-  const systemPrompt = `You are a pediatric therapist writing a brief guide for parents and educators.`;
+  const systemPrompt = `You are a pediatric therapist writing a brief guide for parents and educators.${customPromptInstruction(opts.customPrompt)}`;
   const userPrompt = `Write 5 brief "How to Use This Resource" tips for a ${opts.activityType} resource designed for ${opts.target} (ages ${opts.ageRange}).
 Return JSON: {"tips": ["tip 1", "tip 2", "tip 3", "tip 4", "tip 5"]}
 Keep each tip to 1-2 sentences. Focus on practical implementation advice.
@@ -228,7 +229,7 @@ async function generateTherapeuticPage(pageIndex: number, job: GenerationJob): P
   if (pageIndex === 0) {
     // Cover page — full AI calming illustration
     const prompt = buildImagePrompt({
-      subject: `calming therapeutic resource cover design with gentle nature elements and soothing patterns, ${repPrompt}`,
+      subject: resolveCreativeDirection(opts.customPrompt, `calming therapeutic resource cover design with gentle nature elements and soothing patterns, ${repPrompt}`),
       ageRange: opts.ageRange,
       colorPalette: "muted soothing pastel colors, calming tones",
       additionalDetails: `${targetMod}, therapeutic educational material cover, gentle and supportive visual design, professional and inviting`,
@@ -240,7 +241,7 @@ async function generateTherapeuticPage(pageIndex: number, job: GenerationJob): P
   if (pageIndex === 1) {
     // "How to Use This Resource" page — AI decorative border
     const prompt = buildImagePrompt({
-      subject: `gentle calming decorative border with soft nature elements around edges, large plain white center area`,
+      subject: resolveCreativeDirection(opts.customPrompt, "gentle calming decorative border with soft nature elements around edges, large plain white center area"),
       colorPalette: "muted soothing pastel colors, calming tones",
       additionalDetails: `therapeutic resource page border, the center 80% must be plain white for text, gentle and supportive design`,
     });
@@ -252,7 +253,7 @@ async function generateTherapeuticPage(pageIndex: number, job: GenerationJob): P
   // Activity pages — AI therapeutic illustration + GPT content
   const activityPrompt = getActivityPrompt(opts.activityType, pageIndex - 2);
   const prompt = buildImagePrompt({
-    subject: `${activityPrompt}, ${repPrompt}`,
+    subject: resolveCreativeDirection(opts.customPrompt, `${activityPrompt}, ${repPrompt}`),
     ageRange: opts.ageRange,
     colorPalette: "muted soothing pastel colors, calming tones",
     additionalDetails: `${targetMod}, therapeutic educational material, gentle and supportive visual design, soft colors to allow text overlay readability`,
