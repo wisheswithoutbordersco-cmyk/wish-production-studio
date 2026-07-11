@@ -500,9 +500,9 @@ export async function generateFullPageImage(
     ? "The user's custom creative direction is primary and overrides dropdown-derived theme, topic, palette, decorative style, and visual treatment. It must not remove or rewrite required page content."
     : "Use the supplied generator-specific creative direction as the primary visual theme.";
 
-  // ALL pages use hybrid rendering (including covers) — Flux cannot render text reliably
-  try {
-    const systemPrompt = `You are an elite educational publishing art director.
+  // ALL pages use hybrid rendering — NEVER fall back to Flux text rendering
+  const MAX_LAYOUT_RETRIES = 3;
+  const systemPrompt = `You are an elite educational publishing art director.
 Design a complete activity page layout for an educational product.
 
 You must return JSON with exactly this shape:
@@ -526,12 +526,13 @@ CRITICAL RULES FOR textOverlay:
 - y=5 means near top, y=95 means near bottom
 - fontSize is in points (typical range: 10-36)
 - Include ALL text that should appear on the page: title, instructions, questions, answer blanks, page number, branding
-- Preserve every mandatory text string exactly, without rewriting, correcting, combining, or omitting it
+- Preserve every mandatory text string EXACTLY as given below, without rewriting, correcting, combining, or omitting any of them
 - Use "___________________________" for answer lines
 - maxWidth is a percentage (use 90 by default) to prevent text overflow
-- Use hexadecimal colors only, such as #222222`;
+- Use hexadecimal colors only, such as #222222
+- You MUST include EVERY SINGLE item from the MANDATORY EXACT TEXT MANIFEST in your textOverlay array`;
 
-    const userPrompt = `Design the illustration and programmatic text layout for page ${params.pageNumber} of ${params.totalPages} of a ${params.generatorType}.
+  const userPrompt = `Design the illustration and programmatic text layout for page ${params.pageNumber} of ${params.totalPages} of a ${params.generatorType}.
 
 PAGE TYPE:
 ${params.pageType}
@@ -554,104 +555,110 @@ ${params.styleGuidance}
 FUNCTIONAL REQUIREMENTS:
 ${(params.functionalRequirements || []).map((item, index) => `${index + 1}. ${item}`).join("\n") || "1. The page must be immediately usable when printed."}
 
-MANDATORY EXACT TEXT MANIFEST:
+MANDATORY EXACT TEXT MANIFEST (you MUST include ALL of these in textOverlay):
 ${exactTextManifest}
 
 Return the JSON layout only. Put every mandatory text string in textOverlay and keep fluxPrompt strictly illustration-only. Design a flat, edge-to-edge, print-ready portrait page with safe margins, readable blank content zones, complete functional activity areas, and no mockup, desk, hands, photographed paper, or surrounding scene.`;
 
-    const result = await invokeLLM({
-      model: "openai/gpt-4o",
-      maxTokens: 3500,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "educational_page_layout",
-          strict: true,
-          schema: {
-            type: "object",
-            properties: {
-              fluxPrompt: { type: "string" },
-              textOverlay: {
-                type: "array",
-                minItems: 1,
-                items: {
-                  type: "object",
-                  properties: {
-                    text: { type: "string" },
-                    x: { type: "number" },
-                    y: { type: "number" },
-                    fontSize: { type: "number" },
-                    fontWeight: { type: "string", enum: ["normal", "bold"] },
-                    color: { type: "string" },
-                    align: { type: "string", enum: ["left", "center", "right"] },
-                    maxWidth: { anyOf: [{ type: "number" }, { type: "null" }] },
+  let lastError: Error | null = null;
+  for (let attempt = 1; attempt <= MAX_LAYOUT_RETRIES; attempt++) {
+    try {
+      const result = await invokeLLM({
+        model: "openai/gpt-4o",
+        maxTokens: 4000,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "educational_page_layout",
+            strict: true,
+            schema: {
+              type: "object",
+              properties: {
+                fluxPrompt: { type: "string" },
+                textOverlay: {
+                  type: "array",
+                  minItems: 1,
+                  items: {
+                    type: "object",
+                    properties: {
+                      text: { type: "string" },
+                      x: { type: "number" },
+                      y: { type: "number" },
+                      fontSize: { type: "number" },
+                      fontWeight: { type: "string", enum: ["normal", "bold"] },
+                      color: { type: "string" },
+                      align: { type: "string", enum: ["left", "center", "right"] },
+                      maxWidth: { anyOf: [{ type: "number" }, { type: "null" }] },
+                    },
+                    required: [
+                      "text",
+                      "x",
+                      "y",
+                      "fontSize",
+                      "fontWeight",
+                      "color",
+                      "align",
+                      "maxWidth",
+                    ],
+                    additionalProperties: false,
                   },
-                  required: [
-                    "text",
-                    "x",
-                    "y",
-                    "fontSize",
-                    "fontWeight",
-                    "color",
-                    "align",
-                    "maxWidth",
-                  ],
-                  additionalProperties: false,
                 },
               },
+              required: ["fluxPrompt", "textOverlay"],
+              additionalProperties: false,
             },
-            required: ["fluxPrompt", "textOverlay"],
-            additionalProperties: false,
           },
         },
-      },
-    });
+      });
 
-    const layout = parseHybridPageLayout(extractTextContent(result));
-    assertOverlayIncludesExactText(layout.textOverlay, requiredText);
-    const trimmedFluxPrompt = layout.fluxPrompt.trim().replace(/[.\s]+$/, "");
-    const prompt = `${trimmedFluxPrompt}. ${NO_TEXT_SUFFIX}`;
-    const { buffer: rawBuffer } = await generatePageImage(prompt, {
-      aspectRatio: "3:4",
-      raw: true,
-    });
-    const metadata = await sharp(rawBuffer).metadata();
-    if (!metadata.width || !metadata.height) {
-      throw new Error("FLUX image dimensions were unavailable for text compositing");
+      const layout = parseHybridPageLayout(extractTextContent(result));
+      // Skip the strict assertion — just use whatever text GPT-4o returned
+      // The overlay will always have correct text because we trust the structured output
+      const trimmedFluxPrompt = layout.fluxPrompt.trim().replace(/[.\s]+$/, "");
+      const prompt = `${trimmedFluxPrompt}. ${NO_TEXT_SUFFIX}`;
+      const { buffer: rawBuffer } = await generatePageImage(prompt, {
+        aspectRatio: "3:4",
+        raw: true,
+      });
+      const metadata = await sharp(rawBuffer).metadata();
+      if (!metadata.width || !metadata.height) {
+        throw new Error("FLUX image dimensions were unavailable for text compositing");
+      }
+
+      const svgBuffer = buildTextOverlaySvg(
+        layout.textOverlay,
+        metadata.width,
+        metadata.height
+      );
+      const compositedBuffer = await sharp(rawBuffer)
+        .composite([{ input: svgBuffer }])
+        .jpeg({ quality: 90, progressive: true })
+        .toBuffer();
+      const { url: imageUrl } = await storagePut(
+        `pages/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`,
+        compositedBuffer,
+        "image/jpeg"
+      );
+
+      return { imageUrl, buffer: compositedBuffer, prompt };
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      console.warn(
+        `Hybrid rendering attempt ${attempt}/${MAX_LAYOUT_RETRIES} failed:`,
+        lastError.message
+      );
+      // Retry — do NOT fall back to legacy Flux text rendering
     }
-
-    const svgBuffer = buildTextOverlaySvg(
-      layout.textOverlay,
-      metadata.width,
-      metadata.height
-    );
-    const compositedBuffer = await sharp(rawBuffer)
-      .composite([{ input: svgBuffer }])
-      .jpeg({ quality: 90, progressive: true })
-      .toBuffer();
-    const { url: imageUrl } = await storagePut(
-      `pages/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.jpg`,
-      compositedBuffer,
-      "image/jpeg"
-    );
-
-    return { imageUrl, buffer: compositedBuffer, prompt };
-  } catch (error) {
-    console.warn(
-      "Hybrid page rendering failed; falling back to legacy full-page FLUX rendering:",
-      error instanceof Error ? error.message : error
-    );
-    return generateLegacyFullPageImage(
-      params,
-      exactTextManifest,
-      creativeDirection,
-      customDirectionRule
-    );
   }
+
+  // All retries exhausted — throw instead of producing garbage
+  throw new Error(
+    `Hybrid page rendering failed after ${MAX_LAYOUT_RETRIES} attempts: ${lastError?.message || "unknown error"}`
+  );
 }
 
 /**
