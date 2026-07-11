@@ -17,16 +17,24 @@ const PAGE_HEIGHT = 3300;
 const MAX_PAGE_COUNT = 30;
 
 const NEGATIVE_PROMPT =
-  "no text, no words, no letters, no numbers, no watermark, no signature, no blur, no distortion, no extra limbs, no overlapping shapes, no low resolution, no artifacts";
+  "no text, no words, no letters, no numbers, no writing, no captions, no labels, no watermark, no signature, no blur, no distortion, no artifacts";
 
-type QuickCreatePageType =
-  | "coloring-page"
-  | "worksheet"
-  | "workbook"
-  | "activity-page"
-  | "cover";
+// ─── Types ───────────────────────────────────────────────────────────────────
 
-type QuickCreateRenderMode = "black-and-white" | "full-color";
+type PageType = "coloring-page" | "text-heavy";
+
+interface ContentItem {
+  type: "question" | "instruction" | "activity" | "fill-blank" | "matching" | "bingo-header" | "list-item";
+  text: string;
+}
+
+interface PageContent {
+  pageType: PageType;
+  title: string;
+  subtitle: string;
+  items: ContentItem[];
+  borderPrompt: string;
+}
 
 export interface QuickCreateOptions {
   prompt?: string;
@@ -35,164 +43,90 @@ export interface QuickCreateOptions {
   gradeLevel: string;
 }
 
-interface NormalizedQuickCreateOptions {
+interface NormalizedOptions {
   prompt: string;
   pageCount: number;
   gradeLevel: string;
 }
 
-interface ExpandedPagePrompt {
-  pageType: QuickCreatePageType;
-  renderMode: QuickCreateRenderMode;
-  prompt: string;
-}
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function normalizeOptions(
-  options: QuickCreateOptions
-): NormalizedQuickCreateOptions {
+function normalizeOptions(options: QuickCreateOptions): NormalizedOptions {
   const prompt = (options.prompt || options.customPrompt || "").trim();
   const pageCount = Number(options.pageCount);
   const gradeLevel = String(options.gradeLevel || "").trim();
 
-  if (!prompt) {
-    throw new Error("Prompt is required");
+  if (!prompt) throw new Error("Prompt is required");
+  if (!Number.isInteger(pageCount) || pageCount < 1 || pageCount > MAX_PAGE_COUNT) {
+    throw new Error(`Page count must be between 1 and ${MAX_PAGE_COUNT}`);
   }
-  if (
-    !Number.isInteger(pageCount) ||
-    pageCount < 1 ||
-    pageCount > MAX_PAGE_COUNT
-  ) {
-    throw new Error(
-      `Page count must be an integer between 1 and ${MAX_PAGE_COUNT}`
-    );
-  }
-  if (!gradeLevel) {
-    throw new Error("Grade level is required");
-  }
+  if (!gradeLevel) throw new Error("Grade level is required");
 
-  return {
-    prompt: prompt.slice(0, 2_000),
-    pageCount,
-    gradeLevel: gradeLevel.slice(0, 100),
-  };
+  return { prompt: prompt.slice(0, 2000), pageCount, gradeLevel: gradeLevel.slice(0, 100) };
 }
 
 function extractLlmText(result: Awaited<ReturnType<typeof invokeLLM>>): string {
   const content = result.choices[0]?.message?.content;
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
-
   return content
-    .map(part =>
-      part.type === "text" && typeof part.text === "string" ? part.text : ""
-    )
+    .map((part) => (part.type === "text" && typeof part.text === "string" ? part.text : ""))
     .join("")
     .trim();
 }
 
-function isPageType(value: unknown): value is QuickCreatePageType {
-  return [
-    "coloring-page",
-    "worksheet",
-    "workbook",
-    "activity-page",
-    "cover",
-  ].includes(String(value));
+function escapeXml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
 }
 
-function isRenderMode(value: unknown): value is QuickCreateRenderMode {
-  return value === "black-and-white" || value === "full-color";
+function isColoringRequest(prompt: string): boolean {
+  return /\b(?:coloring|colouring|line art|colour-in|color-in|coloring book|coloring page)\b/i.test(prompt);
 }
 
-function containsTextRenderingInstruction(prompt: string): boolean {
-  const affirmativeTextInstruction =
-    /\b(?:add|display|feature|include|place|print|render|show|spell|use|write)\s+(?:the\s+)?(?:caption|equation|heading|instruction|label|letter|name|number|phrase|quote|sentence|text|title|typography|word)s?\b/i;
-  const explicitCopy =
-    /\b(?:caption|heading|label|text|title)\s+(?:reading|saying|that says)\b|["“”][^"“”]{1,120}["“”]/i;
+// ─── Content Generation (LLM) ───────────────────────────────────────────────
 
-  return affirmativeTextInstruction.test(prompt) || explicitCopy.test(prompt);
-}
-
-function sanitizeFallbackSubject(prompt: string): string {
-  const sanitized = prompt
-    .replace(/["“”][^"“”]*["“”]/g, " ")
-    .replace(
-      /\b(?:with\s+)?(?:a\s+)?(?:title|heading|caption|label|text)\b[^,.!?]*/gi,
-      " "
-    )
-    .replace(/\b(?:that\s+says|saying|reading)\b[^,.!?]*/gi, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  return sanitized.slice(0, 500) || "the requested educational theme";
-}
-
-function fallbackExpandedPrompt(
-  options: NormalizedQuickCreateOptions,
-  pageIndex: number
-): ExpandedPagePrompt {
-  const subject = sanitizeFallbackSubject(options.prompt);
+async function generatePageContent(
+  options: NormalizedOptions,
+  pageIndex: number,
+  totalPages: number
+): Promise<PageContent> {
   const lowerPrompt = options.prompt.toLowerCase();
-  const isColoringPage =
-    /\b(?:coloring|colouring|line art|colour-in|color-in)\b/.test(lowerPrompt);
-  const isCover = /\bcover\b/.test(lowerPrompt);
-  const isWorkbook = /\bworkbook\b/.test(lowerPrompt);
-  const isWorksheet = /\bworksheet\b/.test(lowerPrompt);
 
-  if (isColoringPage) {
+  // For coloring pages, skip content generation entirely
+  if (isColoringRequest(options.prompt)) {
     return {
       pageType: "coloring-page",
-      renderMode: "black-and-white",
-      prompt: `Simple black-and-white line art coloring page of ${subject}. Thick clean outlines, no shading, no color, no background clutter. Kid-friendly, ages ${options.gradeLevel}. Centered on the page, high contrast, printable, vector-like. Create a distinct scene for page ${pageIndex + 1}.`,
+      title: "",
+      subtitle: "",
+      items: [],
+      borderPrompt: `Simple black-and-white line art coloring page illustration based on: ${options.prompt}. Thick clean outlines, no shading, no color, no background clutter. Kid-friendly for ${options.gradeLevel}. Centered on the page, high contrast, printable, vector-like. Page ${pageIndex + 1} of ${totalPages} with a unique scene.`,
     };
   }
 
-  const pageType: QuickCreatePageType = isCover
-    ? "cover"
-    : isWorkbook
-      ? "workbook"
-      : isWorksheet
-        ? "worksheet"
-        : "activity-page";
-  const layoutDirection =
-    pageType === "cover"
-      ? "Bold professional cover composition with a strong central themed illustration and a generous clean area reserved for a title that will be added after generation."
-      : "Clear educational activity layout with a themed decorative border, engaging illustrations, blank unlabeled activity areas, generous white space, and strong visual hierarchy.";
+  // For text-heavy pages, use LLM to generate structured content + border prompt
+  const systemPrompt = `You are a professional educational content creator for printable worksheets and activity pages.
+Given a user's request, generate structured page content AND a decorative border description.
 
-  return {
-    pageType,
-    renderMode: "full-color",
-    prompt: `Full-color printable ${pageType.replace("-", " ")} about ${subject}. ${layoutDirection} Kid-friendly for ${options.gradeLevel}, balanced portrait composition, polished educational publishing style, crisp shapes, vibrant harmonious palette, and no background clutter. Create a distinct composition for page ${pageIndex + 1}.`,
-  };
-}
+RULES:
+- Generate real, accurate, educational content appropriate for the grade level
+- Create 5-8 items per page (questions, activities, fill-in-the-blank, etc.)
+- Each item should be a complete, properly spelled sentence or instruction
+- The borderPrompt describes ONLY decorative art for the page border/frame - NO TEXT in the border
+- The border should have an empty white center (the text goes there programmatically)
+- Make each page unique if multiple pages are requested
 
-async function expandPagePrompt(
-  options: NormalizedQuickCreateOptions,
-  pageIndex: number,
-  totalPages: number
-): Promise<ExpandedPagePrompt> {
-  const systemPrompt = `You are a production image-prompt engineer for printable educational products.
-Expand a simple user request into ONE detailed visual prompt for one 8.5x11-inch portrait page.
-
-Classify the page and follow these rules:
-- Coloring books and coloring pages: pageType "coloring-page", renderMode "black-and-white", and use this fixed style pattern: "Simple black-and-white line art coloring page of [SUBJECT]. Thick clean outlines, no shading, no color, no background clutter. Kid-friendly, ages [AGE_RANGE]. Centered on the page, high contrast, printable, vector-like."
-- Worksheets, workbooks, and activity pages: renderMode "full-color" with a clear educational visual layout, themed decorative border, appealing illustrations, blank unlabeled activity areas where useful, generous white space, and strong hierarchy.
-- Covers: renderMode "full-color" with a bold cover composition, themed illustration, and a clean blank area where a title can be added later.
-
-CRITICAL TEXT-SAFETY RULES:
-- Describe visual artwork only.
-- Never ask the image model to render, show, display, write, spell, or include any title, text, words, letters, numbers, equations, labels, captions, instructions, signatures, or typography.
-- Do not quote any copy from the user's request.
-- Text will be handled separately or omitted.
-- Keep the same overall art direction across the product while making this page visually distinct.
-
-Return only the required JSON object.`;
+Return JSON only.`;
 
   const userPrompt = `User request: ${options.prompt}
-Grade or age range: ${options.gradeLevel}
-Page: ${pageIndex + 1} of ${totalPages}
+Grade level: ${options.gradeLevel}
+Page ${pageIndex + 1} of ${totalPages}
 
-Create the detailed text-free visual prompt for this page.`;
+Generate the structured content for this page.`;
 
   try {
     const result = await invokeLLM({
@@ -203,158 +137,262 @@ Create the detailed text-free visual prompt for this page.`;
       response_format: {
         type: "json_schema",
         json_schema: {
-          name: "quick_create_page_prompt",
+          name: "page_content",
           strict: true,
           schema: {
             type: "object",
             properties: {
-              pageType: {
-                type: "string",
-                enum: [
-                  "coloring-page",
-                  "worksheet",
-                  "workbook",
-                  "activity-page",
-                  "cover",
-                ],
+              title: { type: "string" },
+              subtitle: { type: "string" },
+              items: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    type: {
+                      type: "string",
+                      enum: ["question", "instruction", "activity", "fill-blank", "matching", "bingo-header", "list-item"],
+                    },
+                    text: { type: "string" },
+                  },
+                  required: ["type", "text"],
+                  additionalProperties: false,
+                },
               },
-              renderMode: {
-                type: "string",
-                enum: ["black-and-white", "full-color"],
-              },
-              prompt: { type: "string", minLength: 40, maxLength: 2_000 },
+              borderDescription: { type: "string" },
             },
-            required: ["pageType", "renderMode", "prompt"],
+            required: ["title", "subtitle", "items", "borderDescription"],
             additionalProperties: false,
           },
         },
       },
     });
 
-    const parsed = JSON.parse(extractLlmText(result)) as Record<
-      string,
-      unknown
-    >;
-    if (
-      !isPageType(parsed.pageType) ||
-      !isRenderMode(parsed.renderMode) ||
-      typeof parsed.prompt !== "string" ||
-      !parsed.prompt.trim() ||
-      containsTextRenderingInstruction(parsed.prompt)
-    ) {
-      throw new Error("LLM returned an invalid or text-unsafe image prompt");
+    const parsed = JSON.parse(extractLlmText(result));
+    const title = String(parsed.title || "").trim();
+    const subtitle = String(parsed.subtitle || "").trim();
+    const items: ContentItem[] = Array.isArray(parsed.items)
+      ? parsed.items.map((item: any) => ({
+          type: String(item.type || "question"),
+          text: String(item.text || "").trim(),
+        })).filter((item: ContentItem) => item.text.length > 0)
+      : [];
+    const borderDesc = String(parsed.borderDescription || "colorful decorative border").trim();
+
+    if (!title || items.length === 0) {
+      throw new Error("LLM returned empty content");
     }
 
-    const pageType = parsed.pageType;
     return {
-      pageType,
-      renderMode:
-        pageType === "coloring-page" ? "black-and-white" : "full-color",
-      prompt: parsed.prompt.trim(),
+      pageType: "text-heavy",
+      title,
+      subtitle,
+      items,
+      borderPrompt: `Beautiful decorative border frame illustration: ${borderDesc}. The border is ornate and colorful around all four edges. The CENTER of the image is completely empty white space - only decorative art around the edges forming a frame. Portrait orientation, 8.5x11 inch proportions. Professional printable quality.`,
     };
   } catch (error) {
-    console.warn(
-      `Quick Create prompt expansion failed for page ${pageIndex + 1}; using safe fallback:`,
-      error instanceof Error ? error.message : error
-    );
-    return fallbackExpandedPrompt(options, pageIndex);
+    console.warn(`Content generation failed for page ${pageIndex + 1}, using fallback:`, error);
+    return buildFallbackContent(options, pageIndex, totalPages);
   }
 }
 
-async function resizeAndCenter(
-  input: Buffer,
-  renderMode: QuickCreateRenderMode
-): Promise<Buffer> {
-  const metadata = await sharp(input).metadata();
-  if (!metadata.width || !metadata.height) {
-    throw new Error("Generated image dimensions are unavailable");
-  }
-
-  const scale = Math.min(
-    PAGE_WIDTH / metadata.width,
-    PAGE_HEIGHT / metadata.height
-  );
-  const width = Math.min(
-    PAGE_WIDTH,
-    Math.max(1, Math.round(metadata.width * scale))
-  );
-  const height = Math.min(
-    PAGE_HEIGHT,
-    Math.max(1, Math.round(metadata.height * scale))
-  );
-  const left = Math.floor((PAGE_WIDTH - width) / 2);
-  const right = PAGE_WIDTH - width - left;
-  const top = Math.floor((PAGE_HEIGHT - height) / 2);
-  const bottom = PAGE_HEIGHT - height - top;
-  const kernel =
-    renderMode === "black-and-white"
-      ? sharp.kernel.nearest
-      : sharp.kernel.lanczos3;
-
-  let pipeline = sharp(input)
-    .resize(width, height, { fit: "fill", kernel })
-    .extend({
-      top,
-      bottom,
-      left,
-      right,
-      background: { r: 255, g: 255, b: 255, alpha: 1 },
-    });
-
-  if (renderMode === "black-and-white") {
-    pipeline = pipeline.grayscale().threshold(128);
-  }
-
-  return pipeline.png({ compressionLevel: 9 }).toBuffer();
+function buildFallbackContent(
+  options: NormalizedOptions,
+  pageIndex: number,
+  totalPages: number
+): PageContent {
+  return {
+    pageType: "text-heavy",
+    title: options.prompt.slice(0, 60),
+    subtitle: `${options.gradeLevel} • Page ${pageIndex + 1} of ${totalPages}`,
+    items: [
+      { type: "instruction", text: "Complete the activities below." },
+      { type: "question", text: "Question 1: ___________________________" },
+      { type: "question", text: "Question 2: ___________________________" },
+      { type: "question", text: "Question 3: ___________________________" },
+      { type: "question", text: "Question 4: ___________________________" },
+      { type: "question", text: "Question 5: ___________________________" },
+    ],
+    borderPrompt: `Beautiful colorful decorative border frame with educational theme elements. The CENTER is completely empty white space. Only ornate decorative art around all four edges. Portrait 8.5x11 proportions. Professional printable quality.`,
+  };
 }
 
-async function postProcessImage(
-  rawBuffer: Buffer,
-  renderMode: QuickCreateRenderMode
-): Promise<Buffer> {
-  if (renderMode === "black-and-white") {
-    const cleaned = await sharp(rawBuffer)
-      .rotate()
-      .flatten({ background: "#ffffff" })
-      .grayscale()
-      .threshold(128)
-      .sharpen()
-      .median(2)
-      .png()
-      .toBuffer();
+// ─── SVG Text Overlay Builder ────────────────────────────────────────────────
 
-    return resizeAndCenter(cleaned, renderMode);
+function buildContentSvg(content: PageContent): Buffer {
+  const lines: string[] = [];
+  lines.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${PAGE_WIDTH}" height="${PAGE_HEIGHT}">`);
+
+  // White content panel (inset from edges to show border)
+  const margin = 200;
+  const panelW = PAGE_WIDTH - margin * 2;
+  const panelH = PAGE_HEIGHT - margin * 2;
+  lines.push(`<rect x="${margin}" y="${margin}" width="${panelW}" height="${panelH}" rx="20" fill="white" fill-opacity="0.93"/>`);
+
+  const leftX = margin + 80;
+  const centerX = PAGE_WIDTH / 2;
+  const maxTextWidth = panelW - 160;
+  let y = margin + 140;
+
+  // Title
+  if (content.title) {
+    lines.push(`<text x="${centerX}" y="${y}" font-family="DejaVu Sans, Arial, sans-serif" font-size="100" font-weight="bold" fill="#1a1a1a" text-anchor="middle">${escapeXml(content.title)}</text>`);
+    y += 80;
   }
 
-  const cleaned = await sharp(rawBuffer)
+  // Subtitle
+  if (content.subtitle) {
+    lines.push(`<text x="${centerX}" y="${y}" font-family="DejaVu Sans, Arial, sans-serif" font-size="50" fill="#555" text-anchor="middle">${escapeXml(content.subtitle)}</text>`);
+    y += 60;
+  }
+
+  // Divider line
+  y += 20;
+  lines.push(`<line x1="${leftX}" y1="${y}" x2="${PAGE_WIDTH - margin - 80}" y2="${y}" stroke="#ddd" stroke-width="2"/>`);
+  y += 60;
+
+  // Content items
+  const itemSpacing = Math.min(200, Math.floor((PAGE_HEIGHT - margin - 300 - y) / Math.max(content.items.length, 1)));
+
+  for (const item of content.items) {
+    if (y > PAGE_HEIGHT - margin - 200) break; // Don't overflow
+
+    const fontSize = item.type === "instruction" ? 42 : 46;
+    const fill = item.type === "instruction" ? "#666" : "#222";
+    const weight = item.type === "instruction" ? "normal" : "normal";
+
+    // Word wrap long text
+    const words = item.text.split(" ");
+    let currentLine = "";
+    const wrappedLines: string[] = [];
+    const charsPerLine = Math.floor(maxTextWidth / (fontSize * 0.55));
+
+    for (const word of words) {
+      if ((currentLine + " " + word).trim().length > charsPerLine) {
+        if (currentLine) wrappedLines.push(currentLine.trim());
+        currentLine = word;
+      } else {
+        currentLine = currentLine ? currentLine + " " + word : word;
+      }
+    }
+    if (currentLine) wrappedLines.push(currentLine.trim());
+
+    for (const line of wrappedLines) {
+      if (y > PAGE_HEIGHT - margin - 200) break;
+      lines.push(`<text x="${leftX}" y="${y}" font-family="DejaVu Sans, Arial, sans-serif" font-size="${fontSize}" font-weight="${weight}" fill="${fill}">${escapeXml(line)}</text>`);
+      y += fontSize + 12;
+    }
+
+    // Add answer line for questions
+    if (item.type === "question" || item.type === "fill-blank") {
+      y += 10;
+      lines.push(`<line x1="${leftX + 40}" y1="${y}" x2="${PAGE_WIDTH - margin - 120}" y2="${y}" stroke="#999" stroke-width="1.5" stroke-dasharray="6,4"/>`);
+      y += 20;
+    }
+
+    y += Math.max(itemSpacing - (wrappedLines.length * (fontSize + 12)) - 30, 20);
+  }
+
+  // Branding at bottom
+  lines.push(`<text x="${centerX}" y="${PAGE_HEIGHT - margin + 50}" font-family="DejaVu Sans, Arial, sans-serif" font-size="30" fill="#bbb" text-anchor="middle">WishesWithoutBordersCo</text>`);
+
+  lines.push("</svg>");
+  return Buffer.from(lines.join("\n"));
+}
+
+// ─── Image Generation & Compositing ─────────────────────────────────────────
+
+async function generateBorderImage(borderPrompt: string): Promise<Buffer> {
+  const fullPrompt = `${borderPrompt}\n\nNegative prompt: ${NEGATIVE_PROMPT}`;
+  const { buffer } = await generatePageImage(fullPrompt, {
+    aspectRatio: "3:4",
+    raw: true,
+  });
+  // Resize to page dimensions
+  return sharp(buffer)
+    .resize(PAGE_WIDTH, PAGE_HEIGHT, { fit: "fill", kernel: sharp.kernel.lanczos3 })
+    .png()
+    .toBuffer();
+}
+
+async function generateColoringPage(prompt: string): Promise<Buffer> {
+  const fullPrompt = `${prompt}\n\nNegative prompt: ${NEGATIVE_PROMPT}`;
+  const { buffer } = await generatePageImage(fullPrompt, {
+    aspectRatio: "3:4",
+    raw: true,
+  });
+  // B&W post-processing pipeline from reference docs
+  const cleaned = await sharp(buffer)
     .rotate()
     .flatten({ background: "#ffffff" })
+    .grayscale()
+    .threshold(128)
+    .sharpen()
+    .median(2)
     .png()
     .toBuffer();
 
-  return resizeAndCenter(cleaned, renderMode);
+  // Resize and center on page
+  const metadata = await sharp(cleaned).metadata();
+  if (!metadata.width || !metadata.height) throw new Error("Image dimensions unavailable");
+
+  const scale = Math.min(PAGE_WIDTH / metadata.width, PAGE_HEIGHT / metadata.height);
+  const width = Math.round(metadata.width * scale);
+  const height = Math.round(metadata.height * scale);
+  const left = Math.floor((PAGE_WIDTH - width) / 2);
+  const top = Math.floor((PAGE_HEIGHT - height) / 2);
+
+  return sharp(cleaned)
+    .resize(width, height, { fit: "fill", kernel: sharp.kernel.nearest })
+    .extend({
+      top,
+      bottom: PAGE_HEIGHT - height - top,
+      left,
+      right: PAGE_WIDTH - width - left,
+      background: { r: 255, g: 255, b: 255, alpha: 1 },
+    })
+    .png({ compressionLevel: 9 })
+    .toBuffer();
 }
+
+async function generateTextHeavyPage(content: PageContent): Promise<Buffer> {
+  // Step 1: Generate decorative border from Flux
+  const borderBuffer = await generateBorderImage(content.borderPrompt);
+
+  // Step 2: Build SVG text overlay from structured content
+  const svgBuffer = buildContentSvg(content);
+
+  // Step 3: Composite text over border
+  return sharp(borderBuffer)
+    .composite([{ input: svgBuffer, top: 0, left: 0 }])
+    .png({ compressionLevel: 9 })
+    .toBuffer();
+}
+
+// ─── Page Generation ─────────────────────────────────────────────────────────
 
 async function generateQuickCreatePage(
   pageIndex: number,
   job: GenerationJob
 ): Promise<PageResult> {
-  const options = job.options as unknown as NormalizedQuickCreateOptions;
+  const options = job.options as unknown as NormalizedOptions;
   const pageNumber = pageIndex + 1;
-  const expanded = await expandPagePrompt(options, pageIndex, job.totalPages);
-  const fluxPrompt = `${expanded.prompt}\n\nNegative prompt: ${NEGATIVE_PROMPT}`;
 
-  const { buffer: rawBuffer } = await generatePageImage(fluxPrompt, {
-    aspectRatio: "3:4",
-    raw: true,
-  });
-  const processedBuffer = await postProcessImage(
-    rawBuffer,
-    expanded.renderMode
-  );
+  // Step 1: Generate structured content via LLM
+  const content = await generatePageContent(options, pageIndex, job.totalPages);
+
+  // Step 2: Generate the image based on page type
+  let finalBuffer: Buffer;
+  if (content.pageType === "coloring-page") {
+    finalBuffer = await generateColoringPage(content.borderPrompt);
+  } else {
+    finalBuffer = await generateTextHeavyPage(content);
+  }
+
+  // Step 3: Upload to storage
   const { url: imageUrl } = await storagePut(
     `pages/quick-create/${job.id}/page-${String(pageNumber).padStart(3, "0")}.png`,
-    processedBuffer,
+    finalBuffer,
     "image/png"
   );
 
@@ -362,16 +400,13 @@ async function generateQuickCreatePage(
     pageNumber,
     imageUrl,
     status: "success",
-    metadata: {
-      pageType: expanded.pageType,
-      renderMode: expanded.renderMode,
-    },
+    metadata: { pageType: content.pageType },
   };
 }
 
-async function processQuickCreateChunkInternal(
-  job: GenerationJob
-): Promise<void> {
+// ─── Chunk Processing & Job Creation ─────────────────────────────────────────
+
+async function processQuickCreateChunkInternal(job: GenerationJob): Promise<void> {
   const startIndex = job.nextPageIndex;
   const endIndex = Math.min(startIndex + PAGES_PER_CHUNK, job.totalPages);
 
@@ -389,8 +424,8 @@ async function processQuickCreateChunkInternal(
         statusMessage: `Generated page ${pageIndex + 1} of ${job.totalPages}`,
       });
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      console.error(`Quick Create page ${pageIndex + 1} failed:`, errorMessage);
       addPageResult(job.id, {
         pageNumber: pageIndex + 1,
         imageUrl: "",
@@ -418,7 +453,6 @@ export function createQuickCreateJob(options: QuickCreateOptions): string {
     normalizedOptions,
     `quick-create-${Date.now()}.pdf`
   );
-
   return job.id;
 }
 
