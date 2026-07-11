@@ -256,7 +256,7 @@ async function generateWorkbookPage(pageIndex: number, job: GenerationJob): Prom
  * Custom chunk processor for workbooks.
  */
 async function processWorkbookChunkInternal(job: GenerationJob): Promise<void> {
-  const PAGES_PER_CHUNK = 2;
+  const PAGES_PER_CHUNK = 1;
   const startIndex = job.nextPageIndex;
   const endIndex = Math.min(startIndex + PAGES_PER_CHUNK, job.totalPages);
 
