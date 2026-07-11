@@ -3,10 +3,9 @@
  * Generates print-ready 5x7 greeting cards as PDF.
  * Uses tRPC mutation (single card, not chunked).
  */
-import { generateImage } from "../_core/imageGeneration";
 import { assemblePdf, fetchImageBuffer, PageContent } from "../pdfAssembly";
 import { storagePut } from "../storage";
-import { resolveCreativeDirection } from "./shared";
+import { generatePageImage, resolveCreativeDirection } from "./shared";
 
 export interface CardOptions {
   customPrompt?: string;
@@ -43,10 +42,7 @@ function buildCardPrompt(options: CardOptions): string {
 export async function generateCard(options: CardOptions): Promise<{ pdfUrl: string }> {
   // Generate the card front illustration
   const prompt = buildCardPrompt(options);
-  const result = await generateImage({ prompt });
-  if (!result.url) throw new Error("Image generation failed");
-
-  const imageBuffer = await fetchImageBuffer(result.url);
+  const { buffer: imageBuffer } = await generatePageImage(prompt);
 
   // Build a 5x7 card PDF (front page with image, inside page with message)
   const pages: PageContent[] = [

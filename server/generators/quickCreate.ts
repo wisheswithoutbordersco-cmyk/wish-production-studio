@@ -10,7 +10,7 @@ import {
   type PageResult,
 } from "../jobs";
 import { storagePut } from "../storage";
-import { finalizePdf, generatePageImage } from "./shared";
+import { finalizePdf } from "./shared";
 
 const PAGES_PER_CHUNK = 1;
 const PAGE_WIDTH = 2550;
@@ -239,42 +239,26 @@ async function generateCompositionImage(prompt: string): Promise<Buffer> {
     : new Error("Image generation failed after 3 attempts");
 }
 
-async function generateColoringPage(prompt: string): Promise<Buffer> {
-  const fullPrompt = `${prompt}\n\nNegative prompt: ${COLORING_NEGATIVE_PROMPT}`;
-  const { buffer } = await generatePageImage(fullPrompt, {
-    aspectRatio: "3:4",
-    raw: true,
-  });
+async function generateColoringPage(imagePrompt: string): Promise<Buffer> {
+  // Use GPT-5 Image Mini for coloring pages too — cleaner line art, better compositions
+  const coloringPrompt = `${imagePrompt}. Style: pure black-and-white line art coloring page. Thick clean outlines only, no shading, no gray tones, no color fills, no background textures. High contrast black lines on pure white background. Vector-like clean edges. Professional coloring book quality suitable for printing.`;
 
-  const cleaned = await sharp(buffer)
-    .rotate()
+  const rawBuffer = await generateCompositionImage(coloringPrompt);
+
+  // Post-process to ensure clean B&W output
+  const cleaned = await sharp(rawBuffer)
     .flatten({ background: "#ffffff" })
     .grayscale()
     .threshold(128)
     .sharpen()
-    .median(2)
     .png()
     .toBuffer();
 
-  const metadata = await sharp(cleaned).metadata();
-  if (!metadata.width || !metadata.height) {
-    throw new Error("Image dimensions unavailable");
-  }
-
-  const scale = Math.min(PAGE_WIDTH / metadata.width, PAGE_HEIGHT / metadata.height);
-  const width = Math.round(metadata.width * scale);
-  const height = Math.round(metadata.height * scale);
-  const left = Math.floor((PAGE_WIDTH - width) / 2);
-  const top = Math.floor((PAGE_HEIGHT - height) / 2);
-
+  // Resize to print dimensions
   return sharp(cleaned)
-    .resize(width, height, { fit: "fill", kernel: sharp.kernel.nearest })
-    .extend({
-      top,
-      bottom: PAGE_HEIGHT - height - top,
-      left,
-      right: PAGE_WIDTH - width - left,
-      background: { r: 255, g: 255, b: 255, alpha: 1 },
+    .resize(PAGE_WIDTH, PAGE_HEIGHT, {
+      fit: "fill",
+      kernel: sharp.kernel.lanczos3,
     })
     .png({ compressionLevel: 9 })
     .toBuffer();
