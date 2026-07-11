@@ -405,15 +405,13 @@ async function finalizeCulturalGamePdf(job: GenerationJob): Promise<void> {
 }
 
 export function createCulturalGameJob(options: CulturalGameOptions): string {
-  // Ensure minimum 8 pages: cover + how to play + at least 6 card pages
-  const cardPages = Math.max(6, Math.ceil(options.cardCount / CARDS_PER_PAGE));
+  // Respect user's card count - no forced minimums
+  const cardPages = Math.ceil(options.cardCount / CARDS_PER_PAGE);
   const totalPages = cardPages + 2; // +2 for cover and how-to-play
-  // Adjust cardCount to match actual pages
-  const adjustedOptions = { ...options, cardCount: Math.max(options.cardCount, 24) };
   const job = createJob(
     "cultural-game",
     totalPages,
-    adjustedOptions,
+    options,
     `cultural-game-${options.gameType.toLowerCase().replace(/\s+/g, "-")}.pdf`
   );
   return job.id;
