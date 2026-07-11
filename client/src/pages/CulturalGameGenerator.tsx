@@ -143,14 +143,14 @@ export default function CulturalGameGenerator() {
             <Slider
               value={cardCount}
               onValueChange={setCardCount}
-              min={8}
-              max={48}
-              step={4}
+              min={1}
+              max={30}
+              step={1}
               className="w-full"
             />
             <div className="flex justify-between text-xs text-muted-foreground">
-              <span>8</span>
-              <span>48</span>
+              <span>1</span>
+              <span>30</span>
             </div>
           </div>
 

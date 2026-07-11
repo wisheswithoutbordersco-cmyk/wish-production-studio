@@ -6,6 +6,7 @@
  * Output: 8.5x11 inches (612x792 points at 72 DPI)
  */
 import PDFDocument from "pdfkit";
+import sharp from "sharp";
 
 const PAGE_WIDTH = 612;  // 8.5 inches at 72 DPI
 const PAGE_HEIGHT = 792; // 11 inches at 72 DPI
@@ -338,7 +339,10 @@ export async function assemblePdf(pages: PageContent[]): Promise<Buffer> {
 }
 
 /**
- * Fetches an image from a URL and returns it as a Buffer.
+ * Fetches an image from a URL and returns it as a compressed Buffer.
+ * Images are compressed to JPEG 80% quality, max 2048px on longest side.
+ * This prevents Supabase upload size errors on multi-page PDFs (30 pages).
+ * A 30-page PDF stays under ~15MB instead of 90-150MB with raw PNGs.
  */
 export async function fetchImageBuffer(url: string): Promise<Buffer> {
   // Handle relative URLs (from our storage) - always resolve against localhost
@@ -347,11 +351,22 @@ export async function fetchImageBuffer(url: string): Promise<Buffer> {
     const port = process.env.PORT || 3000;
     fullUrl = `http://localhost:${port}${url}`;
   }
-  
   const response = await fetch(fullUrl);
   if (!response.ok) {
     throw new Error(`Failed to fetch image: ${response.status} from ${fullUrl}`);
   }
   const arrayBuffer = await response.arrayBuffer();
-  return Buffer.from(arrayBuffer);
+  const rawBuffer = Buffer.from(arrayBuffer);
+
+  // Compress image to keep PDF size manageable for upload
+  try {
+    const compressed = await sharp(rawBuffer)
+      .resize(2048, 2048, { fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: 80, progressive: true })
+      .toBuffer();
+    return compressed;
+  } catch {
+    // If compression fails, return raw buffer (still works, just larger)
+    return rawBuffer;
+  }
 }

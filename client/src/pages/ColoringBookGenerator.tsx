@@ -32,7 +32,7 @@ export default function ColoringBookGenerator() {
   const [customPrompt, setCustomPrompt] = useState("");
   const [theme, setTheme] = useState("Animals");
   const [ageRange, setAgeRange] = useState("4-6 Preschool");
-  const [pageCount, setPageCount] = useState([15]);
+  const [pageCount, setPageCount] = useState([10]);
   const [detailLevel, setDetailLevel] = useState("kids");
 
   const { jobState, isGenerating, progress, startJob, cancelJob } = useGenerationJob();
@@ -108,13 +108,13 @@ export default function ColoringBookGenerator() {
             <Slider
               value={pageCount}
               onValueChange={setPageCount}
-              min={10}
+              min={1}
               max={30}
-              step={5}
+              step={1}
               className="w-full"
             />
             <div className="flex justify-between text-xs text-muted-foreground">
-              <span>10</span>
+              <span>1</span>
               <span>30</span>
             </div>
           </div>

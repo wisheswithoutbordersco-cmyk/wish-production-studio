@@ -142,14 +142,14 @@ export default function FlashcardGenerator() {
             <Slider
               value={cardsPerSet}
               onValueChange={setCardsPerSet}
-              min={4}
-              max={26}
+              min={1}
+              max={30}
               step={1}
               className="w-full"
             />
             <div className="flex justify-between text-xs text-muted-foreground">
-              <span>4</span>
-              <span>26</span>
+              <span>1</span>
+              <span>30</span>
             </div>
           </div>
 

@@ -131,13 +131,13 @@ export default function WorkbookGenerator() {
             <Slider
               value={pageCount}
               onValueChange={setPageCount}
-              min={10}
+              min={1}
               max={30}
-              step={5}
+              step={1}
               className="w-full"
             />
             <div className="flex justify-between text-xs text-muted-foreground">
-              <span>10</span>
+              <span>1</span>
               <span>30</span>
             </div>
           </div>

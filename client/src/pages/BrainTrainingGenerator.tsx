@@ -137,13 +137,13 @@ export default function BrainTrainingGenerator() {
             <Slider
               value={pageCount}
               onValueChange={setPageCount}
-              min={5}
+              min={1}
               max={30}
               step={1}
               className="w-full"
             />
             <div className="flex justify-between text-xs text-muted-foreground">
-              <span>5</span>
+              <span>1</span>
               <span>30</span>
             </div>
           </div>

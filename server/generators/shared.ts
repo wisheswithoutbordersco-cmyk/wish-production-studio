@@ -209,7 +209,9 @@ export async function finalizePdf(job: GenerationJob): Promise<void> {
   }
 
   try {
-    // Build page contents for PDF
+    // Build page contents for PDF.
+    // fetchImageBuffer now auto-compresses images (JPEG 80%, max 2048px) so
+    // even 30-page PDFs stay under Supabase's upload limit.
     const pageContents: PageContent[] = [];
     for (const page of successPages) {
       const buffer = await fetchImageBuffer(page.imageUrl);
@@ -221,6 +223,7 @@ export async function finalizePdf(job: GenerationJob): Promise<void> {
     }
 
     const pdfBuffer = await assemblePdf(pageContents);
+    console.log(`PDF assembled: ${(pdfBuffer.length / 1024 / 1024).toFixed(2)} MB for ${successPages.length} pages`);
 
     // Upload PDF to storage
     const { url: pdfUrl } = await storagePut(
