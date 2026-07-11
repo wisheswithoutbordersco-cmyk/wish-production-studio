@@ -339,8 +339,7 @@ async function processTherapeuticChunkInternal(job: GenerationJob): Promise<void
 }
 
 export function createTherapeuticActivityJob(options: TherapeuticActivityOptions): string {
-  // Ensure minimum 5 pages (cover + how-to-use + 3 activity pages)
-  const totalPages = Math.max(5, options.pageCount + 2); // +2 for cover and how-to-use
+  const totalPages = options.pageCount + 2; // +2 for cover and how-to-use
   const job = createJob(
     "therapeutic-activity",
     totalPages,

@@ -248,7 +248,7 @@ async function processOutdoorLearningChunkInternal(job: GenerationJob): Promise<
 }
 
 export function createOutdoorLearningJob(options: OutdoorLearningOptions): string {
-  const totalPages = Math.max(6, options.pageCount + 1);
+  const totalPages = options.pageCount + 1; // +1 for cover
   const job = createJob(
     "outdoor-learning",
     totalPages,

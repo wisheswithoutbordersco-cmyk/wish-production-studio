@@ -222,7 +222,7 @@ async function processWorksheetChunkInternal(job: GenerationJob): Promise<void> 
 }
 
 export function createWorksheetJob(options: WorksheetOptions): string {
-  const totalPages = Math.max(5, options.quantity + 1);
+  const totalPages = options.quantity + 1; // +1 for cover
   const job = createJob(
     "worksheet",
     totalPages,
