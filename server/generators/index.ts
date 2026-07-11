@@ -12,4 +12,5 @@ export * from "./worksheet";
 export * from "./outdoorLearning";
 export * from "./therapeuticActivity";
 export * from "./batchVariant";
+export * from "./quickCreate";
 export * from "./shared";

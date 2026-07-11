@@ -1,6 +1,6 @@
 import { useState, lazy, Suspense } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, CreditCard, BookOpen, Palette, Wand2, Brain, Gamepad2, TreePine, Heart, Layers, FileText, Copy, Library } from "lucide-react";
+import { Loader2, CreditCard, BookOpen, Palette, Wand2, Brain, Gamepad2, TreePine, Heart, Layers, FileText, Copy, Library, Zap } from "lucide-react";
 
 // Lazy load all generator components
 const CardGenerator = lazy(() => import("./CardGenerator"));
@@ -14,6 +14,7 @@ const TherapeuticActivityGenerator = lazy(() => import("./TherapeuticActivityGen
 const FlashcardGenerator = lazy(() => import("./FlashcardGenerator"));
 const WorksheetGenerator = lazy(() => import("./WorksheetGenerator"));
 const BatchVariantGenerator = lazy(() => import("./BatchVariantGenerator"));
+const QuickCreateGenerator = lazy(() => import("./QuickCreateGenerator"));
 const ProductLibrary = lazy(() => import("./ProductLibrary"));
 
 function TabLoading() {
@@ -25,6 +26,7 @@ function TabLoading() {
 }
 
 const TAB_CONFIG = [
+  { id: "quick-create", label: "Quick Create", icon: Zap },
   { id: "cards", label: "Cards", icon: CreditCard },
   { id: "workbooks", label: "Workbooks", icon: BookOpen },
   { id: "coloring", label: "Coloring", icon: Palette },
@@ -40,7 +42,7 @@ const TAB_CONFIG = [
 ];
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState("cards");
+  const [activeTab, setActiveTab] = useState("quick-create");
 
   return (
     <div className="min-h-screen bg-black text-white">
@@ -74,6 +76,13 @@ export default function Home() {
               </TabsTrigger>
             ))}
           </TabsList>
+
+          {/* Quick Create */}
+          <TabsContent value="quick-create">
+            <Suspense fallback={<TabLoading />}>
+              <QuickCreateGenerator />
+            </Suspense>
+          </TabsContent>
 
           {/* Original 4 Tabs */}
           <TabsContent value="cards">

@@ -17,6 +17,7 @@ import {
   createBatchVariantJob, processBatchVariantChunk, getBatchJob,
   createWorkbookJob, processWorkbookChunk,
   createColoringBookJob, processColoringBookChunk,
+  createQuickCreateJob, processQuickCreateChunk,
   generateCard, generateCardFromImage,
   enhanceUpscale, enhanceRestyle, enhanceReimagine,
 } from "./generators";
@@ -172,6 +173,15 @@ generationRouter.post("/api/generate/batch-variant", async (req: Request, res: R
   }
 });
 
+generationRouter.post("/api/generate/quick-create", async (req: Request, res: Response) => {
+  try {
+    const jobId = createQuickCreateJob(req.body);
+    res.json({ jobId });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : "Failed to create job" });
+  }
+});
+
 // ===== Job Polling Endpoint =====
 // Each poll triggers generation of the next chunk (3-5 pages)
 
@@ -252,6 +262,9 @@ generationRouter.get("/api/generate/job/:id", async (req: Request, res: Response
           break;
         case "coloring-book":
           await processColoringBookChunk(id);
+          break;
+        case "quick-create":
+          await processQuickCreateChunk(id);
           break;
         default:
           console.warn(`Unknown generator type: ${job.generatorType}`);
