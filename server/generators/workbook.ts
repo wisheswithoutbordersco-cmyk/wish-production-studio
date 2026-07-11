@@ -3,12 +3,12 @@
  *
  * Strategy:
  * - COVER page: Full-page AI illustration with title overlay
- * - CONTENT pages: Full-page AI illustration (soft/muted) with text overlaid
- *   inside semi-transparent white panels for readability.
+ * - CONTENT pages: AI illustration contained in a top header with all
+ *   structured activity content rendered on a solid-white area below.
  *
  * This approach produces sellable educational products because:
- * 1. Every page has a beautiful themed AI illustration (edge-to-edge)
- * 2. Text is always perfectly readable (black on white/light panels)
+ * 1. Every page has a beautiful themed AI illustration
+ * 2. Text is always perfectly readable (black on solid white)
  * 3. Activities have proper spacing for kids to write answers
  * 4. Placeholder text is scrubbed automatically
  */
@@ -33,6 +33,8 @@ const PAGE_WIDTH = 612;
 const PAGE_HEIGHT = 792;
 const MARGIN = 50;
 const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
+const ACTIVITY_IMAGE_HEIGHT = 200;
+const ACTIVITY_CONTENT_START_Y = ACTIVITY_IMAGE_HEIGHT + 16;
 
 const SUBJECT_PROMPTS: Record<string, string[]> = {
   "Math": [
@@ -216,12 +218,12 @@ async function generateWorkbookPage(pageIndex: number, job: GenerationJob): Prom
     return { pageNumber: 1, imageUrl, status: "success", metadata: { isCover: true } };
   }
 
-  // Activity pages — generate AI background image + GPT content
+  // Activity pages — generate an AI illustration for the contained header
   const subjectPrompts = SUBJECT_PROMPTS[opts.subject] || SUBJECT_PROMPTS["Math"];
   const subjectPrompt = subjectPrompts[(pageIndex - 1) % subjectPrompts.length];
   const prompt = buildImagePrompt({
     subject: resolveCreativeDirection(opts.customPrompt, `${subjectPrompt}, ${getThemeModifier(opts.theme)}`),
-    additionalDetails: `educational activity page illustration with soft muted colors to allow text overlay, ${getGradeLevelModifier(opts.gradeLevel)}, suitable for an educational workbook, the lower 60% should be lighter for text readability`,
+    additionalDetails: `educational header illustration composed for the top quarter of a portrait workbook page, important subjects centered and fully visible, no text or lettering, ${getGradeLevelModifier(opts.gradeLevel)}, suitable for an educational workbook`,
   });
   const { imageUrl } = await generatePageImage(prompt);
 
@@ -276,9 +278,8 @@ async function processWorkbookChunkInternal(job: GenerationJob): Promise<void> {
 }
 
 /**
- * Assemble the workbook PDF with AI backgrounds and readability panels.
- * Every content page has a full-page AI illustration with text overlaid
- * inside semi-transparent white panels.
+ * Assemble the workbook PDF with full-page cover art and contained activity
+ * illustrations above a solid-white, text-only content area.
  */
 async function finalizeWorkbookPdf(job: GenerationJob): Promise<void> {
   updateJob(job.id, { statusMessage: "Assembling workbook PDF..." });
@@ -353,66 +354,56 @@ async function finalizeWorkbookPdf(job: GenerationJob): Promise<void> {
         });
       } else {
         // ═══════════════════════════════════════════════════════════════════
-        // CONTENT PAGE — Full AI background + white readability panels
+        // CONTENT PAGE — Contained AI header + solid-white activity area
         // ═══════════════════════════════════════════════════════════════════
         const ac = page.metadata?.activityContent || {};
         const contentBlocks: NonNullable<PageContent["contentBlocks"]> = [];
 
-        // ── Title panel at top ──
+        // ── Activity title ──
         contentBlocks.push({
           text: scrubPlaceholders(ac.pageTitle) || "Activity",
           x: MARGIN - 10,
-          y: 24,
+          y: ACTIVITY_CONTENT_START_Y,
           width: CONTENT_WIDTH + 20,
           fontSize: 18,
           font: "bold",
           align: "center",
           fontColor: "#1a1a1a",
-          backgroundColor: "rgba(255,255,255,0.92)",
-          padding: 12,
-          radius: 8,
         });
 
         // ── Educational purpose ──
         contentBlocks.push({
           text: scrubPlaceholders(ac.educationalPurpose) || "",
           x: MARGIN,
-          y: 72,
+          y: ACTIVITY_CONTENT_START_Y + 30,
           width: CONTENT_WIDTH,
           fontSize: 9,
           font: "normal",
           align: "center",
           fontColor: "#555555",
-          backgroundColor: "rgba(255,255,255,0.85)",
-          padding: 6,
-          radius: 4,
         });
 
-        // ── Instructions panel ──
+        // ── Instructions ──
         contentBlocks.push({
           text: scrubPlaceholders(ac.instructions) || "Complete the activity below.",
           x: MARGIN,
-          y: 100,
+          y: ACTIVITY_CONTENT_START_Y + 58,
           width: CONTENT_WIDTH,
           fontSize: 12,
           font: "bold",
           align: "left",
           fontColor: "#1a1a1a",
-          backgroundColor: "rgba(255,255,255,0.93)",
-          padding: 12,
-          radius: 6,
         });
 
-        // ── Activity items in a large white panel ──
+        // ── Numbered activity items and answer lines ──
         const rawItems: string[] = Array.isArray(ac.activityItems) ? ac.activityItems : [];
         const items = rawItems
           .map((it) => scrubPlaceholders(it))
           .filter((it): it is string => !!it && it.trim().length > 0);
 
-        // Build all items into one panel for clean readability
-        const ITEMS_START_Y = 148;
+        const ITEMS_START_Y = ACTIVITY_CONTENT_START_Y + 100;
         const itemCount = Math.max(items.length, 1);
-        const spacing = Math.min(90, (PAGE_HEIGHT - 120 - ITEMS_START_Y) / itemCount);
+        const spacing = Math.min(78, (PAGE_HEIGHT - 62 - ITEMS_START_Y) / itemCount);
 
         items.forEach((item: string, idx: number) => {
           const yPos = ITEMS_START_Y + idx * spacing;
@@ -428,9 +419,6 @@ async function finalizeWorkbookPdf(job: GenerationJob): Promise<void> {
             font: "normal",
             align: "left",
             fontColor: "#1a1a1a",
-            backgroundColor: "rgba(255,255,255,0.90)",
-            padding: 10,
-            radius: 6,
           });
 
           // Answer line
@@ -443,9 +431,6 @@ async function finalizeWorkbookPdf(job: GenerationJob): Promise<void> {
             font: "normal",
             align: "left",
             fontColor: "#999999",
-            backgroundColor: "rgba(255,255,255,0.80)",
-            padding: 4,
-            radius: 4,
           });
         });
 
@@ -459,13 +444,11 @@ async function finalizeWorkbookPdf(job: GenerationJob): Promise<void> {
           font: "normal",
           align: "center",
           fontColor: "#555555",
-          backgroundColor: "rgba(255,255,255,0.85)",
-          padding: 6,
-          radius: 4,
         });
 
         pageContents.push({
           imageBuffer: buffer,
+          imageHeight: ACTIVITY_IMAGE_HEIGHT,
           contentBlocks,
           pageNumber: page.pageNumber,
           totalPages: job.totalPages,

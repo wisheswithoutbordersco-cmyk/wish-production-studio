@@ -8,6 +8,8 @@ import { assemblePdf, fetchImageBuffer, PageContent } from "../pdfAssembly";
 import { storagePut } from "../storage";
 
 const PAGE_WIDTH = 612;
+const ACTIVITY_IMAGE_HEIGHT = 650;
+const ACTIVITY_TEXT_START_Y = ACTIVITY_IMAGE_HEIGHT + 12;
 
 // Short, child-facing instruction for each activity type so every page tells
 // the learner what to do (fixes "no instructions" symptom).
@@ -118,8 +120,8 @@ async function generateBrainTrainingPage(pageIndex: number, job: GenerationJob):
 /**
  * Custom finalizer for brain training. The shared finalizer placed the image
  * with no text, which is why pages looked half-filled and had no instructions.
- * This version keeps the edge-to-edge worksheet image and adds a readable
- * instruction strip at the top of each page.
+ * This version keeps the generated exercise large while placing the title
+ * and instruction in a separate solid-white band below the image.
  */
 async function finalizeBrainTrainingPdf(job: GenerationJob): Promise<void> {
   updateJob(job.id, { statusMessage: "Assembling brain training PDF..." });
@@ -144,33 +146,28 @@ async function finalizeBrainTrainingPdf(job: GenerationJob): Promise<void> {
         {
           text: activityName,
           x: 30,
-          y: 26,
+          y: ACTIVITY_TEXT_START_Y,
           width: PAGE_WIDTH - 60,
           fontSize: 16,
           font: "bold",
           align: "center",
           fontColor: "#1a1a1a",
-          backgroundColor: "rgba(255,255,255,0.9)",
-          padding: 8,
-          radius: 6,
         },
         {
           text: instruction,
           x: 30,
-          y: 58,
+          y: ACTIVITY_TEXT_START_Y + 28,
           width: PAGE_WIDTH - 60,
           fontSize: 11,
           font: "normal",
           align: "center",
           fontColor: "#333333",
-          backgroundColor: "rgba(255,255,255,0.85)",
-          padding: 6,
-          radius: 5,
         },
       ];
 
       pageContents.push({
         imageBuffer: buffer,
+        imageHeight: ACTIVITY_IMAGE_HEIGHT,
         contentBlocks,
         pageNumber: page.pageNumber,
         totalPages: job.totalPages,

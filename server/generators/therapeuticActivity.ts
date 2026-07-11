@@ -3,9 +3,9 @@
  *
  * Strategy:
  * - COVER page: Full-page AI calming illustration with title overlay
- * - HOW-TO-USE page: AI decorative border with structured tips in readability panels
- * - CONTENT pages: Full-page AI therapeutic illustration (soft/muted) with text
- *   overlaid inside semi-transparent white panels for readability.
+ * - HOW-TO-USE page: Contained calming header with structured tips on solid white
+ * - CONTENT pages: Contained therapeutic header illustration with all activity
+ *   text rendered on solid white below.
  *
  * All pages use calming pastel colors and soothing design appropriate for
  * children with various therapeutic needs (ADHD, ASD, Anxiety, etc.)
@@ -28,6 +28,8 @@ const PAGE_WIDTH = 612;
 const PAGE_HEIGHT = 792;
 const MARGIN = 50;
 const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
+const ACTIVITY_IMAGE_HEIGHT = 200;
+const ACTIVITY_CONTENT_START_Y = ACTIVITY_IMAGE_HEIGHT + 16;
 
 const ACTIVITY_PROMPTS: Record<string, string[]> = {
   "Visual Schedule": [
@@ -239,24 +241,24 @@ async function generateTherapeuticPage(pageIndex: number, job: GenerationJob): P
   }
 
   if (pageIndex === 1) {
-    // "How to Use This Resource" page — AI decorative border
+    // "How to Use This Resource" page — AI header illustration
     const prompt = buildImagePrompt({
-      subject: resolveCreativeDirection(opts.customPrompt, "gentle calming decorative border with soft nature elements around edges, large plain white center area"),
+      subject: resolveCreativeDirection(opts.customPrompt, "gentle calming header illustration with soft nature elements"),
       colorPalette: "muted soothing pastel colors, calming tones",
-      additionalDetails: `therapeutic resource page border, the center 80% must be plain white for text, gentle and supportive design`,
+      additionalDetails: `therapeutic resource header composed for the top quarter of a portrait page, important subjects centered and fully visible, no text or lettering, gentle and supportive design`,
     });
     const { imageUrl } = await generatePageImage(prompt);
     const howToUse = await generateHowToUse(opts);
     return { pageNumber: 2, imageUrl, status: "success", metadata: { isHowToUse: true, howToUse } };
   }
 
-  // Activity pages — AI therapeutic illustration + GPT content
+  // Activity pages — AI therapeutic header illustration + GPT content
   const activityPrompt = getActivityPrompt(opts.activityType, pageIndex - 2);
   const prompt = buildImagePrompt({
     subject: resolveCreativeDirection(opts.customPrompt, `${activityPrompt}, ${repPrompt}`),
     ageRange: opts.ageRange,
     colorPalette: "muted soothing pastel colors, calming tones",
-    additionalDetails: `${targetMod}, therapeutic educational material, gentle and supportive visual design, soft colors to allow text overlay readability`,
+    additionalDetails: `${targetMod}, therapeutic educational header composed for the top quarter of a portrait activity page, important subjects centered and fully visible, no text or lettering, gentle and supportive visual design`,
   });
   const { imageUrl } = await generatePageImage(prompt);
 
@@ -311,7 +313,8 @@ async function processTherapeuticChunkInternal(job: GenerationJob): Promise<void
 }
 
 /**
- * Assemble the therapeutic activity PDF — AI backgrounds + readability panels.
+ * Assemble the therapeutic activity PDF — full-page cover art and contained
+ * illustrations above solid-white guidance and activity areas.
  */
 async function finalizeTherapeuticPdf(job: GenerationJob): Promise<void> {
   updateJob(job.id, { statusMessage: "Assembling therapeutic activity PDF..." });
@@ -384,7 +387,7 @@ async function finalizeTherapeuticPdf(job: GenerationJob): Promise<void> {
           totalPages: job.totalPages,
         });
       } else if (page.metadata?.isHowToUse) {
-        // How to Use page — AI border + readability panels
+        // How to Use page — contained AI header + solid-white guidance area
         const buffer = await fetchImageBuffer(page.imageUrl);
         const tips: string[] = page.metadata.howToUse || [];
         const contentBlocks: NonNullable<PageContent["contentBlocks"]> = [];
@@ -392,70 +395,59 @@ async function finalizeTherapeuticPdf(job: GenerationJob): Promise<void> {
         contentBlocks.push({
           text: "How to Use This Resource",
           x: MARGIN,
-          y: 80,
+          y: ACTIVITY_CONTENT_START_Y,
           width: CONTENT_WIDTH,
           fontSize: 22,
           font: "bold",
           align: "center",
           fontColor: "#2c3e50",
-          backgroundColor: "rgba(255,255,255,0.93)",
-          padding: 14,
-          radius: 8,
         });
 
         contentBlocks.push({
           text: `Designed for: ${opts.target} \u2022 Ages: ${opts.ageRange}`,
           x: MARGIN,
-          y: 130,
+          y: ACTIVITY_CONTENT_START_Y + 36,
           width: CONTENT_WIDTH,
           fontSize: 11,
           font: "normal",
           align: "center",
           fontColor: "#555555",
-          backgroundColor: "rgba(255,255,255,0.88)",
-          padding: 8,
-          radius: 6,
         });
 
         tips.forEach((tip: string, idx: number) => {
           contentBlocks.push({
             text: `\u2713 ${scrubPlaceholders(tip)}`,
             x: MARGIN + 10,
-            y: 175 + idx * 65,
+            y: ACTIVITY_CONTENT_START_Y + 76 + idx * 70,
             width: CONTENT_WIDTH - 20,
             fontSize: 12,
             font: "normal",
             align: "left",
             fontColor: "#333333",
-            backgroundColor: "rgba(255,255,255,0.92)",
-            padding: 12,
-            radius: 6,
           });
         });
 
         contentBlocks.push({
           text: "Remember: Every child is unique. Adapt activities to individual needs and comfort levels.",
           x: MARGIN,
-          y: 620,
+          y: PAGE_HEIGHT - 110,
           width: CONTENT_WIDTH,
           fontSize: 10,
           font: "normal",
           align: "center",
           fontColor: "#666666",
-          backgroundColor: "rgba(255,255,255,0.88)",
-          padding: 10,
-          radius: 6,
         });
 
         pageContents.push({
           imageBuffer: buffer,
+          imageHeight: ACTIVITY_IMAGE_HEIGHT,
           contentBlocks,
           pageNumber: page.pageNumber,
           totalPages: job.totalPages,
         });
       } else {
         // ═══════════════════════════════════════════════════════════════════
-        // ACTIVITY PAGE — AI therapeutic background + white readability panels
+        // ACTIVITY PAGE — Contained AI header + solid-white activity area
         // ═══════════════════════════════════════════════════════════════════
         const buffer = await fetchImageBuffer(page.imageUrl);
         const ac = page.metadata?.activityContent || {};
@@ -465,30 +457,24 @@ async function finalizeTherapeuticPdf(job: GenerationJob): Promise<void> {
         contentBlocks.push({
           text: scrubPlaceholders(ac.activityName) || "Activity",
           x: MARGIN - 10,
-          y: 24,
+          y: ACTIVITY_CONTENT_START_Y,
           width: CONTENT_WIDTH + 20,
           fontSize: 18,
           font: "bold",
           align: "center",
           fontColor: "#2c3e50",
-          backgroundColor: "rgba(255,255,255,0.93)",
-          padding: 12,
-          radius: 8,
         });
 
         // ── Target info ──
         contentBlocks.push({
           text: scrubPlaceholders(ac.targetInfo) || "",
           x: MARGIN,
-          y: 72,
+          y: ACTIVITY_CONTENT_START_Y + 32,
           width: CONTENT_WIDTH,
           fontSize: 9,
           font: "normal",
           align: "center",
           fontColor: "#555555",
-          backgroundColor: "rgba(255,255,255,0.85)",
-          padding: 6,
-          radius: 4,
         });
 
         // ── Materials section ──
@@ -501,15 +487,12 @@ async function finalizeTherapeuticPdf(job: GenerationJob): Promise<void> {
         contentBlocks.push({
           text: materialsText,
           x: MARGIN,
-          y: 100,
+          y: ACTIVITY_CONTENT_START_Y + 64,
           width: CONTENT_WIDTH,
           fontSize: 10,
           font: "normal",
           align: "left",
           fontColor: "#1a1a1a",
-          backgroundColor: "rgba(255,255,255,0.92)",
-          padding: 12,
-          radius: 6,
         });
 
         // ── Steps section ──
@@ -520,8 +503,8 @@ async function finalizeTherapeuticPdf(job: GenerationJob): Promise<void> {
             : "1. Follow the activity as shown.");
 
         // Calculate Y position based on materials
-        const materialsHeight = 50 + materials.length * 16;
-        const stepsY = 100 + materialsHeight + 10;
+        const materialsHeight = 44 + materials.length * 14;
+        const stepsY = ACTIVITY_CONTENT_START_Y + 64 + materialsHeight + 8;
 
         contentBlocks.push({
           text: stepsText,
@@ -532,9 +515,6 @@ async function finalizeTherapeuticPdf(job: GenerationJob): Promise<void> {
           font: "normal",
           align: "left",
           fontColor: "#1a1a1a",
-          backgroundColor: "rgba(255,255,255,0.92)",
-          padding: 12,
-          radius: 6,
         });
 
         // ── Professional tip at bottom ──
@@ -548,9 +528,6 @@ async function finalizeTherapeuticPdf(job: GenerationJob): Promise<void> {
             font: "normal",
             align: "center",
             fontColor: "#3E2723",
-            backgroundColor: "rgba(255,248,225,0.93)",
-            padding: 10,
-            radius: 6,
           });
         }
 
@@ -564,13 +541,11 @@ async function finalizeTherapeuticPdf(job: GenerationJob): Promise<void> {
           font: "normal",
           align: "center",
           fontColor: "#555555",
-          backgroundColor: "rgba(255,255,255,0.85)",
-          padding: 6,
-          radius: 4,
         });
 
         pageContents.push({
           imageBuffer: buffer,
+          imageHeight: ACTIVITY_IMAGE_HEIGHT,
           contentBlocks,
           pageNumber: page.pageNumber,
           totalPages: job.totalPages,

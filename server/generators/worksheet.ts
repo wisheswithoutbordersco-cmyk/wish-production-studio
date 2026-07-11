@@ -3,8 +3,8 @@
  *
  * Strategy:
  * - COVER page: Full-page AI illustration with title overlay
- * - CONTENT pages: Full-page AI decorative border/frame with text overlaid
- *   inside semi-transparent white panels for readability.
+ * - CONTENT pages: AI illustration contained in a top header with all
+ *   worksheet text and answer lines rendered on solid white below.
  */
 import { buildImagePrompt, generatePageImage, generateContent, customPromptInstruction, resolveCreativeDirection } from "./shared";
 import { createJob, getJob, updateJob, addPageResult, type GenerationJob, type PageResult } from "../jobs";
@@ -15,6 +15,8 @@ const PAGE_WIDTH = 612;
 const PAGE_HEIGHT = 792;
 const MARGIN = 50;
 const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
+const ACTIVITY_IMAGE_HEIGHT = 200;
+const ACTIVITY_CONTENT_START_Y = ACTIVITY_IMAGE_HEIGHT + 16;
 
 export interface WorksheetOptions {
   customPrompt?: string;
@@ -151,11 +153,11 @@ async function generateWorksheetPage(pageIndex: number, job: GenerationJob): Pro
     };
   }
 
-  // Content pages — AI decorative border + GPT content
+  // Content pages — AI header illustration + GPT content
   const prompt = buildImagePrompt({
-    subject: resolveCreativeDirection(opts.customPrompt, `decorative page border and frame design for a ${opts.subject} ${opts.specificSkill} worksheet`),
+    subject: resolveCreativeDirection(opts.customPrompt, `educational header illustration for a ${opts.subject} ${opts.specificSkill} worksheet`),
     theme: opts.customPrompt ? undefined : opts.theme,
-    additionalDetails: `elegant border frame with themed decorative elements ONLY around the outer edges of the page, the center 70% of the page must be completely plain white with no illustrations, suitable for ${opts.gradeLevel} grade level educational worksheet, print-ready`,
+    additionalDetails: `themed illustration composed for the top quarter of a portrait worksheet page, important subjects centered and fully visible, no text or lettering, suitable for ${opts.gradeLevel} grade level, print-ready`,
   });
   const { imageUrl } = await generatePageImage(prompt);
 
@@ -210,7 +212,8 @@ async function processWorksheetChunkInternal(job: GenerationJob): Promise<void> 
 }
 
 /**
- * Assemble the worksheet PDF — AI decorative borders + readability panels.
+ * Assemble the worksheet PDF — full-page cover art and contained activity
+ * illustrations above a solid-white worksheet area.
  */
 async function finalizeWorksheetPdf(job: GenerationJob): Promise<void> {
   updateJob(job.id, { statusMessage: "Assembling PDF..." });
@@ -285,7 +288,7 @@ async function finalizeWorksheetPdf(job: GenerationJob): Promise<void> {
         });
       } else {
         // ═══════════════════════════════════════════════════════════════════
-        // CONTENT PAGE — AI decorative border + white readability panels
+        // CONTENT PAGE — Contained AI header + solid-white worksheet area
         // ═══════════════════════════════════════════════════════════════════
         const wc = page.metadata?.worksheetContent || {};
         const contentBlocks: NonNullable<PageContent["contentBlocks"]> = [];
@@ -294,30 +297,24 @@ async function finalizeWorksheetPdf(job: GenerationJob): Promise<void> {
         contentBlocks.push({
           text: "Name: ________________  Date: ________",
           x: MARGIN,
-          y: 30,
+          y: ACTIVITY_CONTENT_START_Y,
           width: CONTENT_WIDTH,
           fontSize: 10,
           font: "normal",
           align: "left",
           fontColor: "#444444",
-          backgroundColor: "rgba(255,255,255,0.92)",
-          padding: 8,
-          radius: 4,
         });
 
         // ── Title ──
         contentBlocks.push({
           text: scrubPlaceholders(wc.title) || "Practice",
           x: MARGIN,
-          y: 60,
+          y: ACTIVITY_CONTENT_START_Y + 28,
           width: CONTENT_WIDTH,
           fontSize: 20,
           font: "bold",
           align: "center",
           fontColor: "#1a1a1a",
-          backgroundColor: "rgba(255,255,255,0.93)",
-          padding: 12,
-          radius: 8,
         });
 
         // ── Activity type + Instructions ──
@@ -325,15 +322,12 @@ async function finalizeWorksheetPdf(job: GenerationJob): Promise<void> {
         contentBlocks.push({
           text: `${wc.activityType ? wc.activityType.toUpperCase() + ": " : ""}${instrText}`,
           x: MARGIN,
-          y: 105,
+          y: ACTIVITY_CONTENT_START_Y + 66,
           width: CONTENT_WIDTH,
           fontSize: 11,
           font: "bold",
           align: "left",
           fontColor: "#1a1a1a",
-          backgroundColor: "rgba(255,255,255,0.92)",
-          padding: 10,
-          radius: 6,
         });
 
         // ── Activity items ──
@@ -342,8 +336,8 @@ async function finalizeWorksheetPdf(job: GenerationJob): Promise<void> {
           .map((it: string) => scrubPlaceholders(it))
           .filter((it: string) => it.trim().length > 0);
 
-        const ITEMS_START_Y = 150;
-        const ITEMS_END_Y = PAGE_HEIGHT - 60;
+        const ITEMS_START_Y = ACTIVITY_CONTENT_START_Y + 110;
+        const ITEMS_END_Y = PAGE_HEIGHT - 62;
         const itemCount = Math.max(cleanItems.length, 1);
         const spacing = Math.min(85, (ITEMS_END_Y - ITEMS_START_Y) / itemCount);
 
@@ -359,9 +353,6 @@ async function finalizeWorksheetPdf(job: GenerationJob): Promise<void> {
             font: "normal",
             align: "left",
             fontColor: "#1a1a1a",
-            backgroundColor: "rgba(255,255,255,0.90)",
-            padding: 10,
-            radius: 6,
           });
 
           // Answer line
@@ -374,9 +365,6 @@ async function finalizeWorksheetPdf(job: GenerationJob): Promise<void> {
             font: "normal",
             align: "left",
             fontColor: "#BBBBBB",
-            backgroundColor: "rgba(255,255,255,0.80)",
-            padding: 4,
-            radius: 4,
           });
         });
 
@@ -390,13 +378,11 @@ async function finalizeWorksheetPdf(job: GenerationJob): Promise<void> {
           font: "normal",
           align: "center",
           fontColor: "#555555",
-          backgroundColor: "rgba(255,255,255,0.85)",
-          padding: 6,
-          radius: 4,
         });
 
         pageContents.push({
           imageBuffer: buffer,
+          imageHeight: ACTIVITY_IMAGE_HEIGHT,
           contentBlocks,
           pageNumber: page.pageNumber,
           totalPages: job.totalPages,

@@ -14,6 +14,9 @@ const BRANDING_TEXT = "WishesWithoutBordersCo";
 
 export interface PageContent {
   imageBuffer?: Buffer;
+  // When set, the page image is confined to the top of the page at this height.
+  // The remaining area is rendered as solid white for text content.
+  imageHeight?: number;
   imageUrl?: string;
   title?: string;
   subtitle?: string;
@@ -106,16 +109,27 @@ export async function assemblePdf(pages: PageContent[]): Promise<Buffer> {
         doc.rect(0, 0, PAGE_WIDTH, PAGE_HEIGHT).fill(page.backgroundColor);
       }
 
-      // Full-page background image
-      if (page.imageBuffer) {
+      // Page image. By default this remains full-page for covers, cards, and
+      // image-only generators. Text-heavy pages can opt into a contained top
+      // illustration by setting imageHeight.
+      const imageHeight = page.imageHeight === undefined
+        ? PAGE_HEIGHT
+        : Math.max(0, Math.min(PAGE_HEIGHT, page.imageHeight));
+
+      if (page.imageBuffer && imageHeight > 0) {
         try {
           doc.image(page.imageBuffer, 0, 0, {
             width: PAGE_WIDTH,
-            height: PAGE_HEIGHT,
+            height: imageHeight,
           });
         } catch (e) {
           console.warn("Failed to embed image in PDF:", e);
         }
+      }
+
+      // A partial-height image always gets a fully opaque white content area.
+      if (page.imageHeight !== undefined && imageHeight < PAGE_HEIGHT) {
+        doc.rect(0, imageHeight, PAGE_WIDTH, PAGE_HEIGHT - imageHeight).fill("#FFFFFF");
       }
 
       // Title
