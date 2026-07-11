@@ -113,6 +113,16 @@ export function buildImagePrompt(params: {
 /**
  * Generate content using LLM (GPT) - for trivia questions, worksheet problems, etc.
  */
+function extractTextContent(result: Awaited<ReturnType<typeof invokeLLM>>): string {
+  const content = result.choices[0]?.message?.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    const textPart = content.find((p): p is { type: "text"; text: string } => p.type === "text");
+    return textPart?.text || "";
+  }
+  return "";
+}
+
 export async function generateContent(params: {
   systemPrompt: string;
   userPrompt: string;
@@ -126,20 +136,119 @@ export async function generateContent(params: {
     response_format: params.responseFormat,
   });
 
-  const content = result.choices[0]?.message?.content;
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    const textPart = content.find((p): p is { type: "text"; text: string } => p.type === "text");
-    return textPart?.text || "";
+  return extractTextContent(result);
+}
+
+export interface FullPageImagePromptParams {
+  generatorType: string;
+  pageType: string;
+  pageNumber: number;
+  totalPages: number;
+  audience: string;
+  creativeDirection: string;
+  exactText: string[];
+  layoutGuidance: string;
+  styleGuidance: string;
+  functionalRequirements?: string[];
+  customPrompt?: string;
+}
+
+function buildExactTextManifest(exactText: string[]): string {
+  return exactText
+    .map((text, index) => `${index + 1}. ${text.replace(/\s+/g, " ").trim()}`)
+    .filter(line => !/^\d+\.\s*$/.test(line))
+    .join("\n");
+}
+
+/**
+ * Uses GPT-4o to art-direct one complete portrait page before FLUX renders it.
+ * All student-facing text, layout, decoration, page numbering, and branding are
+ * part of the image prompt; nothing is added later by PDFKit.
+ */
+export async function generateFullPageImage(
+  params: FullPageImagePromptParams
+): Promise<{ imageUrl: string; buffer: Buffer; prompt: string }> {
+  const exactTextManifest = buildExactTextManifest([
+    ...params.exactText,
+    `Page ${params.pageNumber} of ${params.totalPages}`,
+    "WishesWithoutBordersCo",
+  ]);
+  const creativeDirection = normalizeCustomPrompt(params.customPrompt) || params.creativeDirection;
+  const customDirectionRule = normalizeCustomPrompt(params.customPrompt)
+    ? "The user's custom creative direction is primary and overrides dropdown-derived theme, topic, palette, decorative style, and visual treatment. It must not remove or rewrite required page content."
+    : "Use the supplied generator-specific creative direction as the primary visual theme.";
+
+  const systemPrompt = `You are an elite educational publishing art director and image-prompt engineer.
+Create an ultra-detailed prompt for FLUX Pro to render ONE COMPLETE, production-ready 8.5x11-inch portrait page as a single flat image.
+The generated image itself must contain the entire finished page: every title, instruction, question, answer blank, list, label, box, grid, decorative element, page number, and brand mark.
+Do not describe a header illustration with empty space for later text. Do not request mockups, paper photographed on a desk, separate assets, or post-production overlays.
+Return JSON only in this shape: {"prompt":"the complete FLUX prompt"}.`;
+
+  const userPrompt = `Design page ${params.pageNumber} of ${params.totalPages} for a ${params.generatorType}.
+
+PAGE TYPE:
+${params.pageType}
+
+AUDIENCE:
+${params.audience}
+
+CREATIVE DIRECTION:
+${creativeDirection}
+
+CUSTOM-DIRECTION RULE:
+${customDirectionRule}
+
+LAYOUT GUIDANCE:
+${params.layoutGuidance}
+
+STYLE AND TYPOGRAPHY GUIDANCE:
+${params.styleGuidance}
+
+FUNCTIONAL REQUIREMENTS:
+${(params.functionalRequirements || []).map((item, index) => `${index + 1}. ${item}`).join("\n") || "1. The page must be immediately usable when printed."}
+
+MANDATORY EXACT TEXT MANIFEST:
+${exactTextManifest}
+
+Write a single ultra-detailed FLUX prompt that specifies the portrait composition edge-to-edge, safe print margins, precise positioning and hierarchy of every content section, typography style and relative sizes, boxes/columns/grids/answer areas, integrated themed illustrations and mascots, border and decorative treatment, color palette, and footer placement. Quote every mandatory text string exactly as written. Explicitly require crisp, correctly spelled, highly legible text and adequate blank response space. The final image must be a flat full-page design with no surrounding background, no frame, no shadow, no book mockup, no hands, and no separate PDF text layer.`;
+
+  const result = await invokeLLM({
+    model: "openai/gpt-4o",
+    maxTokens: 3500,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    response_format: { type: "json_object" },
+  });
+
+  const rawContent = extractTextContent(result);
+  let detailedPrompt = "";
+  try {
+    const parsed = JSON.parse(rawContent);
+    detailedPrompt = typeof parsed.prompt === "string" ? parsed.prompt.trim() : "";
+  } catch {
+    detailedPrompt = rawContent.trim();
   }
-  return "";
+
+  if (!detailedPrompt) {
+    detailedPrompt = `${params.pageType}. ${creativeDirection}. ${params.layoutGuidance}. ${params.styleGuidance}.`;
+  }
+
+  const prompt = `Create ONE COMPLETE 8.5x11 portrait page as a single finished image, filling the entire canvas edge-to-edge. The image IS the final printable page; do not leave space for later PDF text overlays.\n\n${detailedPrompt}\n\nMANDATORY EXACT COPY — render every line below clearly, correctly spelled, and exactly as written:\n${exactTextManifest}\n\nProduction constraints: flat full-page graphic design, portrait orientation, safe print margins, crisp high-contrast typography, all functional answer blanks and activity areas visible, no cropped content, no external border, no frame, no drop shadow, no mockup, no desk, no hands, no separate sheet of paper, no placeholder text, no lorem ipsum.`;
+
+  const { imageUrl, buffer } = await generatePageImage(prompt, { aspectRatio: "3:4" });
+  return { imageUrl, buffer, prompt };
 }
 
 /**
  * Generate a single page image and return the buffer.
  */
-export async function generatePageImage(prompt: string): Promise<{ imageUrl: string; buffer: Buffer }> {
-  const result = await generateImage({ prompt });
+export async function generatePageImage(
+  prompt: string,
+  options: { aspectRatio?: string } = {}
+): Promise<{ imageUrl: string; buffer: Buffer }> {
+  const result = await generateImage({ prompt, aspectRatio: options.aspectRatio });
   if (!result.url) {
     throw new Error("Image generation returned no URL");
   }
@@ -209,17 +318,13 @@ export async function finalizePdf(job: GenerationJob): Promise<void> {
   }
 
   try {
-    // Build page contents for PDF.
-    // fetchImageBuffer now auto-compresses images (JPEG 80%, max 2048px) so
-    // even 30-page PDFs stay under Supabase's upload limit.
+    // Each generated image is already the complete printable page. Pass only
+    // the compressed image buffer so PDFKit cannot add text, page numbers, or
+    // branding overlays after generation.
     const pageContents: PageContent[] = [];
     for (const page of successPages) {
       const buffer = await fetchImageBuffer(page.imageUrl);
-      pageContents.push({
-        imageBuffer: buffer,
-        pageNumber: page.pageNumber,
-        totalPages: job.totalPages,
-      });
+      pageContents.push({ imageBuffer: buffer });
     }
 
     const pdfBuffer = await assemblePdf(pageContents);

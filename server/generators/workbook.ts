@@ -1,21 +1,13 @@
 /**
  * Workbook Generator
  *
- * Strategy:
- * - COVER page: Full-page AI illustration with title overlay
- * - CONTENT pages: AI illustration contained in a top header with all
- *   structured activity content rendered on a solid-white area below.
- *
- * This approach produces sellable educational products because:
- * 1. Every page has a beautiful themed AI illustration
- * 2. Text is always perfectly readable (black on solid white)
- * 3. Activities have proper spacing for kids to write answers
- * 4. Placeholder text is scrubbed automatically
+ * Every cover and activity page is generated as one complete portrait image.
+ * GPT-4o writes a detailed page-design prompt containing the exact copy,
+ * layout, typography, activity spaces, decoration, branding, and page number;
+ * FLUX renders that prompt as the final printable page with no PDF text overlay.
  */
-import { buildImagePrompt, generatePageImage, generateContent, customPromptInstruction, resolveCreativeDirection } from "./shared";
+import { generateFullPageImage, generateContent, customPromptInstruction, finalizePdf } from "./shared";
 import { createJob, getJob, updateJob, addPageResult, type GenerationJob, type PageResult } from "../jobs";
-import { assemblePdf, fetchImageBuffer, PageContent } from "../pdfAssembly";
-import { storagePut } from "../storage";
 
 export interface WorkbookOptions {
   customPrompt?: string;
@@ -28,13 +20,6 @@ export interface WorkbookOptions {
   includeAnswerKey: boolean;
   includeLicensePage: boolean;
 }
-
-const PAGE_WIDTH = 612;
-const PAGE_HEIGHT = 792;
-const MARGIN = 50;
-const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
-const ACTIVITY_IMAGE_HEIGHT = 200;
-const ACTIVITY_CONTENT_START_Y = ACTIVITY_IMAGE_HEIGHT + 16;
 
 const SUBJECT_PROMPTS: Record<string, string[]> = {
   "Math": [
@@ -204,38 +189,67 @@ RULES:
 
 async function generateWorkbookPage(pageIndex: number, job: GenerationJob): Promise<PageResult> {
   const opts = job.options as WorkbookOptions;
+  const pageNumber = pageIndex + 1;
 
   if (pageIndex === 0) {
-    // Cover page — full AI illustration
-    const coverPrompt = buildImagePrompt({
-      subject: resolveCreativeDirection(
-        opts.customPrompt,
-        `book cover illustration for "${opts.coverTitle || opts.subject + ' Workbook'}", ${getThemeModifier(opts.theme)}`
-      ),
-      additionalDetails: `professional educational workbook cover design, vibrant and appealing, ${getGradeLevelModifier(opts.gradeLevel)}`,
+    const title = scrubPlaceholders(opts.coverTitle) || `${opts.subject} Workbook`;
+    const author = scrubPlaceholders(opts.authorName) || "WishesWithoutBordersCo";
+    const { imageUrl } = await generateFullPageImage({
+      generatorType: "educational workbook",
+      pageType: "front cover",
+      pageNumber,
+      totalPages: job.totalPages,
+      audience: `${opts.gradeLevel} students`,
+      creativeDirection: `A professional ${opts.subject} workbook cover, ${getThemeModifier(opts.theme)}, ${getGradeLevelModifier(opts.gradeLevel)}`,
+      customPrompt: opts.customPrompt,
+      exactText: [title, opts.theme, `Grade: ${opts.gradeLevel}`, author],
+      layoutGuidance: "Create a high-impact portrait cover with the title as the dominant focal point, a clear theme subtitle and grade badge, integrated subject-specific illustrations, and the author/brand at the bottom. Keep all text inside generous safe margins.",
+      styleGuidance: "Premium educational publishing design with expressive display typography, polished supporting type, layered themed flourishes, cohesive color blocking, and a professional bookstore-ready finish.",
+      functionalRequirements: [
+        "The cover must read clearly at thumbnail size.",
+        "Do not include worksheet questions or answer areas on the cover.",
+      ],
     });
-    const { imageUrl } = await generatePageImage(coverPrompt);
-    return { pageNumber: 1, imageUrl, status: "success", metadata: { isCover: true } };
+
+    return { pageNumber, imageUrl, status: "success", metadata: { isCover: true } };
   }
 
-  // Activity pages — generate an AI illustration for the contained header
+  const activityContent = await generateWorkbookActivity(opts, pageIndex - 1);
   const subjectPrompts = SUBJECT_PROMPTS[opts.subject] || SUBJECT_PROMPTS["Math"];
   const subjectPrompt = subjectPrompts[(pageIndex - 1) % subjectPrompts.length];
-  const prompt = buildImagePrompt({
-    subject: resolveCreativeDirection(opts.customPrompt, `${subjectPrompt}, ${getThemeModifier(opts.theme)}`),
-    additionalDetails: `educational header illustration composed for the top quarter of a portrait workbook page, important subjects centered and fully visible, no text or lettering, ${getGradeLevelModifier(opts.gradeLevel)}, suitable for an educational workbook`,
+  const items = activityContent.activityItems
+    .map(item => scrubPlaceholders(item))
+    .filter(item => item.length > 0);
+  const exactText = [
+    scrubPlaceholders(activityContent.pageTitle) || `Activity ${pageIndex}`,
+    scrubPlaceholders(activityContent.educationalPurpose) || `Develop ${opts.subject} skills`,
+    `Instructions: ${scrubPlaceholders(activityContent.instructions) || "Complete the activity below."}`,
+    ...items.flatMap((item, index) => [
+      `${index + 1}. ${item}`,
+      "Answer: ______________________________",
+    ]),
+    `${opts.subject} | ${opts.theme} | ${opts.gradeLevel}`,
+  ];
+
+  const { imageUrl } = await generateFullPageImage({
+    generatorType: "educational workbook",
+    pageType: `student activity page ${pageIndex}`,
+    pageNumber,
+    totalPages: job.totalPages,
+    audience: `${opts.gradeLevel} students`,
+    creativeDirection: `${subjectPrompt}, ${getThemeModifier(opts.theme)}, ${getGradeLevelModifier(opts.gradeLevel)}`,
+    customPrompt: opts.customPrompt,
+    exactText,
+    layoutGuidance: "Use a complete full-page worksheet composition: compact illustrated title banner at the top, educational-purpose line and instruction panel below it, then evenly spaced numbered activity cards filling the main page. Place a generous handwriting answer line directly beneath every activity item. Finish with a small subject/theme/grade footer.",
+    styleGuidance: "Professional teacher-resource typography with a playful bold title, highly legible body text, clear hierarchy, themed icons and a friendly mascot integrated around the content without covering any words or answer spaces. Use coordinated borders, boxes, subtle patterns, and print-friendly colors.",
+    functionalRequirements: [
+      "Every question and answer line must fit fully on the page and remain easy to write on after printing.",
+      "The activity content is primary; decoration must never overlap text or response areas.",
+      "Preserve all underscores and mathematical symbols exactly.",
+    ],
   });
-  const { imageUrl } = await generatePageImage(prompt);
 
-  // Generate educational activity content
-  const activityContent = await generateWorkbookActivity(opts, pageIndex - 1);
-
-  return {
-    pageNumber: pageIndex + 1,
-    imageUrl,
-    status: "success",
-    metadata: { activityContent },
-  };
+  return { pageNumber, imageUrl, status: "success", metadata: { activityContent } };
 }
 
 /**
@@ -273,208 +287,7 @@ async function processWorkbookChunkInternal(job: GenerationJob): Promise<void> {
 
   const updatedJob = getJob(job.id);
   if (updatedJob && updatedJob.nextPageIndex >= updatedJob.totalPages) {
-    await finalizeWorkbookPdf(updatedJob);
-  }
-}
-
-/**
- * Assemble the workbook PDF with full-page cover art and contained activity
- * illustrations above a solid-white, text-only content area.
- */
-async function finalizeWorkbookPdf(job: GenerationJob): Promise<void> {
-  updateJob(job.id, { statusMessage: "Assembling workbook PDF..." });
-
-  const successPages = job.pageResults.filter(r => r.status === "success");
-  if (successPages.length === 0) {
-    updateJob(job.id, { status: "error", errorMessage: "No pages were generated successfully." });
-    return;
-  }
-
-  try {
-    const opts = job.options as WorkbookOptions;
-    const pageContents: PageContent[] = [];
-
-    for (const page of successPages) {
-      const buffer = await fetchImageBuffer(page.imageUrl);
-
-      if (page.metadata?.isCover) {
-        // Cover page — full AI image with title overlay
-        pageContents.push({
-          imageBuffer: buffer,
-          contentBlocks: [
-            {
-              text: opts.coverTitle || `${opts.subject} Workbook`,
-              x: MARGIN,
-              y: 240,
-              width: CONTENT_WIDTH,
-              fontSize: 32,
-              font: "bold",
-              align: "center",
-              fontColor: "#FFFFFF",
-              backgroundColor: "rgba(0,0,0,0.5)",
-              padding: 16,
-              radius: 8,
-            },
-            {
-              text: opts.theme,
-              x: MARGIN,
-              y: 310,
-              width: CONTENT_WIDTH,
-              fontSize: 16,
-              font: "normal",
-              align: "center",
-              fontColor: "#FFFFFF",
-              backgroundColor: "rgba(0,0,0,0.35)",
-              padding: 8,
-              radius: 6,
-            },
-            {
-              text: `Grade: ${opts.gradeLevel}`,
-              x: MARGIN,
-              y: 355,
-              width: CONTENT_WIDTH,
-              fontSize: 13,
-              font: "normal",
-              align: "center",
-              fontColor: "#FFFFFF",
-            },
-            {
-              text: opts.authorName || "WishesWithoutBordersCo",
-              x: MARGIN,
-              y: 700,
-              width: CONTENT_WIDTH,
-              fontSize: 11,
-              font: "normal",
-              align: "center",
-              fontColor: "#FFFFFF",
-            },
-          ],
-          pageNumber: 1,
-          totalPages: job.totalPages,
-        });
-      } else {
-        // ═══════════════════════════════════════════════════════════════════
-        // CONTENT PAGE — Contained AI header + solid-white activity area
-        // ═══════════════════════════════════════════════════════════════════
-        const ac = page.metadata?.activityContent || {};
-        const contentBlocks: NonNullable<PageContent["contentBlocks"]> = [];
-
-        // ── Activity title ──
-        contentBlocks.push({
-          text: scrubPlaceholders(ac.pageTitle) || "Activity",
-          x: MARGIN - 10,
-          y: ACTIVITY_CONTENT_START_Y,
-          width: CONTENT_WIDTH + 20,
-          fontSize: 18,
-          font: "bold",
-          align: "center",
-          fontColor: "#1a1a1a",
-        });
-
-        // ── Educational purpose ──
-        contentBlocks.push({
-          text: scrubPlaceholders(ac.educationalPurpose) || "",
-          x: MARGIN,
-          y: ACTIVITY_CONTENT_START_Y + 30,
-          width: CONTENT_WIDTH,
-          fontSize: 9,
-          font: "normal",
-          align: "center",
-          fontColor: "#555555",
-        });
-
-        // ── Instructions ──
-        contentBlocks.push({
-          text: scrubPlaceholders(ac.instructions) || "Complete the activity below.",
-          x: MARGIN,
-          y: ACTIVITY_CONTENT_START_Y + 58,
-          width: CONTENT_WIDTH,
-          fontSize: 12,
-          font: "bold",
-          align: "left",
-          fontColor: "#1a1a1a",
-        });
-
-        // ── Numbered activity items and answer lines ──
-        const rawItems: string[] = Array.isArray(ac.activityItems) ? ac.activityItems : [];
-        const items = rawItems
-          .map((it) => scrubPlaceholders(it))
-          .filter((it): it is string => !!it && it.trim().length > 0);
-
-        const ITEMS_START_Y = ACTIVITY_CONTENT_START_Y + 100;
-        const itemCount = Math.max(items.length, 1);
-        const spacing = Math.min(78, (PAGE_HEIGHT - 62 - ITEMS_START_Y) / itemCount);
-
-        items.forEach((item: string, idx: number) => {
-          const yPos = ITEMS_START_Y + idx * spacing;
-
-          // Numbered item with answer line
-          const numberedItem = `${idx + 1}.  ${item}`;
-          contentBlocks.push({
-            text: numberedItem,
-            x: MARGIN,
-            y: yPos,
-            width: CONTENT_WIDTH,
-            fontSize: 12,
-            font: "normal",
-            align: "left",
-            fontColor: "#1a1a1a",
-          });
-
-          // Answer line
-          contentBlocks.push({
-            text: "________________________________________",
-            x: MARGIN + 20,
-            y: yPos + 34,
-            width: CONTENT_WIDTH - 40,
-            fontSize: 11,
-            font: "normal",
-            align: "left",
-            fontColor: "#999999",
-          });
-        });
-
-        // ── Footer info ──
-        contentBlocks.push({
-          text: `${opts.subject} | ${opts.theme} | ${opts.gradeLevel}`,
-          x: MARGIN,
-          y: PAGE_HEIGHT - 40,
-          width: CONTENT_WIDTH,
-          fontSize: 8,
-          font: "normal",
-          align: "center",
-          fontColor: "#555555",
-        });
-
-        pageContents.push({
-          imageBuffer: buffer,
-          imageHeight: ACTIVITY_IMAGE_HEIGHT,
-          contentBlocks,
-          pageNumber: page.pageNumber,
-          totalPages: job.totalPages,
-        });
-      }
-    }
-
-    const pdfBuffer = await assemblePdf(pageContents);
-
-    const { url: pdfUrl } = await storagePut(
-      `products/${job.generatorType}/${job.filename}`,
-      pdfBuffer,
-      "application/pdf"
-    );
-
-    const coverUrl = successPages[0]?.imageUrl || null;
-
-    updateJob(job.id, {
-      status: successPages.length === job.totalPages ? "complete" : "partial",
-      pdfUrl,
-      coverImageUrl: coverUrl,
-      statusMessage: "PDF ready for download!",
-    });
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : "PDF assembly failed";
-    updateJob(job.id, { status: "error", errorMessage: errorMsg });
+    await finalizePdf(updatedJob);
   }
 }
 

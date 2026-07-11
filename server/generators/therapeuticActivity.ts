@@ -1,19 +1,13 @@
 /**
  * Therapeutic Activity Generator
  *
- * Strategy:
- * - COVER page: Full-page AI calming illustration with title overlay
- * - HOW-TO-USE page: Contained calming header with structured tips on solid white
- * - CONTENT pages: Contained therapeutic header illustration with all activity
- *   text rendered on solid white below.
- *
- * All pages use calming pastel colors and soothing design appropriate for
- * children with various therapeutic needs (ADHD, ASD, Anxiety, etc.)
+ * Every cover, guide, and activity page is generated as one complete portrait
+ * image. GPT-4o specifies the exact copy, therapeutic layout, typography,
+ * response areas, calming decoration, branding, and page number for FLUX to
+ * render as the final printable page with no later text overlay.
  */
-import { buildImagePrompt, generatePageImage, generateContent, customPromptInstruction, resolveCreativeDirection } from "./shared";
+import { generateFullPageImage, generateContent, customPromptInstruction, finalizePdf } from "./shared";
 import { createJob, getJob, updateJob, addPageResult, type GenerationJob, type PageResult } from "../jobs";
-import { assemblePdf, fetchImageBuffer, PageContent } from "../pdfAssembly";
-import { storagePut } from "../storage";
 
 export interface TherapeuticActivityOptions {
   customPrompt?: string;
@@ -23,13 +17,6 @@ export interface TherapeuticActivityOptions {
   ageRange: string;
   pageCount: number;
 }
-
-const PAGE_WIDTH = 612;
-const PAGE_HEIGHT = 792;
-const MARGIN = 50;
-const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
-const ACTIVITY_IMAGE_HEIGHT = 200;
-const ACTIVITY_CONTENT_START_Y = ACTIVITY_IMAGE_HEIGHT + 16;
 
 const ACTIVITY_PROMPTS: Record<string, string[]> = {
   "Visual Schedule": [
@@ -225,52 +212,91 @@ NEVER include placeholder text like "[Picture of...]" or "(insert image)".`;
 
 async function generateTherapeuticPage(pageIndex: number, job: GenerationJob): Promise<PageResult> {
   const opts = job.options as TherapeuticActivityOptions;
+  const pageNumber = pageIndex + 1;
   const repPrompt = getRepresentationPrompt(opts.representation);
   const targetMod = getTargetModifier(opts.target);
 
   if (pageIndex === 0) {
-    // Cover page — full AI calming illustration
-    const prompt = buildImagePrompt({
-      subject: resolveCreativeDirection(opts.customPrompt, `calming therapeutic resource cover design with gentle nature elements and soothing patterns, ${repPrompt}`),
-      ageRange: opts.ageRange,
-      colorPalette: "muted soothing pastel colors, calming tones",
-      additionalDetails: `${targetMod}, therapeutic educational material cover, gentle and supportive visual design, professional and inviting`,
+    const { imageUrl } = await generateFullPageImage({
+      generatorType: "therapeutic activity resource",
+      pageType: "front cover",
+      pageNumber,
+      totalPages: job.totalPages,
+      audience: `${opts.target} learners ages ${opts.ageRange}`,
+      creativeDirection: `A calming ${opts.activityType} therapeutic resource, ${repPrompt}, ${targetMod}`,
+      customPrompt: opts.customPrompt,
+      exactText: [opts.activityType, `For: ${opts.target}`, `Ages: ${opts.ageRange}`, "Therapeutic Activities Resource"],
+      layoutGuidance: "Create a reassuring portrait cover with the resource title as the primary focal point, a clear target-population subtitle and age badge, inclusive child-centered illustrations, gentle nature or sensory motifs, and unobtrusive branding at the bottom.",
+      styleGuidance: "Professional pediatric therapy publishing design with soft rounded display typography, highly readable supporting type, soothing pastel colors, gentle organic shapes, subtle borders, and a calm uncluttered finish.",
+      functionalRequirements: ["Avoid visual overload, harsh contrast, frightening imagery, and stigmatizing symbols."],
     });
-    const { imageUrl } = await generatePageImage(prompt);
-    return { pageNumber: 1, imageUrl, status: "success", metadata: { isCover: true } };
+
+    return { pageNumber, imageUrl, status: "success", metadata: { isCover: true } };
   }
 
   if (pageIndex === 1) {
-    // "How to Use This Resource" page — AI header illustration
-    const prompt = buildImagePrompt({
-      subject: resolveCreativeDirection(opts.customPrompt, "gentle calming header illustration with soft nature elements"),
-      colorPalette: "muted soothing pastel colors, calming tones",
-      additionalDetails: `therapeutic resource header composed for the top quarter of a portrait page, important subjects centered and fully visible, no text or lettering, gentle and supportive design`,
-    });
-    const { imageUrl } = await generatePageImage(prompt);
     const howToUse = await generateHowToUse(opts);
-    return { pageNumber: 2, imageUrl, status: "success", metadata: { isHowToUse: true, howToUse } };
+    const tips = howToUse.map(tip => scrubPlaceholders(tip)).filter(Boolean);
+    const exactText = [
+      "How to Use This Resource",
+      `Designed for: ${opts.target} • Ages: ${opts.ageRange}`,
+      ...tips.map(tip => `✓ ${tip}`),
+      "Remember: Every child is unique. Adapt activities to individual needs and comfort levels.",
+    ];
+    const { imageUrl } = await generateFullPageImage({
+      generatorType: "therapeutic activity resource",
+      pageType: "how-to-use guidance page",
+      pageNumber,
+      totalPages: job.totalPages,
+      audience: `parents, educators, and therapists supporting ${opts.target} learners ages ${opts.ageRange}`,
+      creativeDirection: `A calm practical guidance page for a ${opts.activityType} resource, ${repPrompt}, ${targetMod}`,
+      customPrompt: opts.customPrompt,
+      exactText,
+      layoutGuidance: "Create a complete portrait guidance page with a calming illustrated title banner, a centered audience line, five large rounded tip cards arranged vertically with check icons, a gentle reminder callout near the bottom, and a compact branded footer.",
+      styleGuidance: "Sensory-friendly professional therapy-resource design with soft pastel panels, rounded sans-serif typography, strong legibility, generous spacing, minimal clutter, and supportive inclusive decorative accents.",
+      functionalRequirements: [
+        "Keep every practical tip fully visible and easy to scan.",
+        "Use predictable alignment and clear visual boundaries between tips.",
+      ],
+    });
+
+    return { pageNumber, imageUrl, status: "success", metadata: { isHowToUse: true, howToUse } };
   }
 
-  // Activity pages — AI therapeutic header illustration + GPT content
   const activityPrompt = getActivityPrompt(opts.activityType, pageIndex - 2);
-  const prompt = buildImagePrompt({
-    subject: resolveCreativeDirection(opts.customPrompt, `${activityPrompt}, ${repPrompt}`),
-    ageRange: opts.ageRange,
-    colorPalette: "muted soothing pastel colors, calming tones",
-    additionalDetails: `${targetMod}, therapeutic educational header composed for the top quarter of a portrait activity page, important subjects centered and fully visible, no text or lettering, gentle and supportive visual design`,
-  });
-  const { imageUrl } = await generatePageImage(prompt);
-
-  // Generate structured activity content
   const activityContent = await generateTherapeuticContent(opts, pageIndex - 2);
+  const materials = activityContent.materials.map(item => scrubPlaceholders(item)).filter(Boolean);
+  const steps = activityContent.steps.map(item => scrubPlaceholders(item)).filter(Boolean);
+  const exactText = [
+    scrubPlaceholders(activityContent.activityName) || "Therapeutic Activity",
+    scrubPlaceholders(activityContent.targetInfo) || `For ${opts.target}, ages ${opts.ageRange}`,
+    "Materials Needed:",
+    ...materials.map(item => `• ${item}`),
+    "Instructions:",
+    ...steps.map((step, index) => `${index + 1}. ${step}`),
+    `Tip: ${scrubPlaceholders(activityContent.tip)}`,
+    `${opts.activityType} | ${opts.target} | Ages ${opts.ageRange}`,
+  ];
 
-  return {
-    pageNumber: pageIndex + 1,
-    imageUrl,
-    status: "success",
-    metadata: { activityContent },
-  };
+  const { imageUrl } = await generateFullPageImage({
+    generatorType: "therapeutic activity page",
+    pageType: `${opts.activityType} activity ${pageIndex - 1}`,
+    pageNumber,
+    totalPages: job.totalPages,
+    audience: `${opts.target} learners ages ${opts.ageRange} and their supporting adults`,
+    creativeDirection: `${activityPrompt}; ${repPrompt}; ${targetMod}`,
+    customPrompt: opts.customPrompt,
+    exactText,
+    layoutGuidance: "Create a complete portrait therapy activity page with a calming illustrated title banner, a concise target-skills line, a compact materials panel, a large numbered instruction section with predictable spacing, a professional tip callout near the bottom, and a small footer. Integrate supportive illustrations without obstructing any content.",
+    styleGuidance: "Evidence-informed pediatric therapy resource with sensory-friendly pastel colors, rounded readable typography, clear visual boundaries, minimal distractions, inclusive characters, simple supportive icons, and a calm professional editorial layout.",
+    functionalRequirements: [
+      "Every material and numbered instruction must be fully visible, correctly ordered, and easy to follow.",
+      "Keep the page predictable, uncluttered, non-stigmatizing, and adaptable to different comfort levels.",
+      "Decorations must never overlap instructions, visual supports, or functional activity areas.",
+    ],
+  });
+
+  return { pageNumber, imageUrl, status: "success", metadata: { activityContent } };
 }
 
 /**
@@ -308,270 +334,7 @@ async function processTherapeuticChunkInternal(job: GenerationJob): Promise<void
 
   const updatedJob = getJob(job.id);
   if (updatedJob && updatedJob.nextPageIndex >= updatedJob.totalPages) {
-    await finalizeTherapeuticPdf(updatedJob);
-  }
-}
-
-/**
- * Assemble the therapeutic activity PDF — full-page cover art and contained
- * illustrations above solid-white guidance and activity areas.
- */
-async function finalizeTherapeuticPdf(job: GenerationJob): Promise<void> {
-  updateJob(job.id, { statusMessage: "Assembling therapeutic activity PDF..." });
-
-  const successPages = job.pageResults.filter(r => r.status === "success");
-  if (successPages.length === 0) {
-    updateJob(job.id, { status: "error", errorMessage: "No pages were generated successfully." });
-    return;
-  }
-
-  try {
-    const opts = job.options as TherapeuticActivityOptions;
-    const pageContents: PageContent[] = [];
-
-    for (const page of successPages) {
-      if (page.metadata?.isCover) {
-        // Cover page — full AI image with title overlay
-        const buffer = await fetchImageBuffer(page.imageUrl);
-        pageContents.push({
-          imageBuffer: buffer,
-          contentBlocks: [
-            {
-              text: opts.activityType,
-              x: MARGIN,
-              y: 250,
-              width: CONTENT_WIDTH,
-              fontSize: 26,
-              font: "bold",
-              align: "center",
-              fontColor: "#FFFFFF",
-              backgroundColor: "rgba(0,0,0,0.45)",
-              padding: 14,
-              radius: 8,
-            },
-            {
-              text: `For: ${opts.target}`,
-              x: MARGIN,
-              y: 310,
-              width: CONTENT_WIDTH,
-              fontSize: 14,
-              font: "normal",
-              align: "center",
-              fontColor: "#FFFFFF",
-              backgroundColor: "rgba(0,0,0,0.35)",
-              padding: 8,
-              radius: 6,
-            },
-            {
-              text: `Ages: ${opts.ageRange}`,
-              x: MARGIN,
-              y: 350,
-              width: CONTENT_WIDTH,
-              fontSize: 12,
-              font: "normal",
-              align: "center",
-              fontColor: "#FFFFFF",
-            },
-            {
-              text: "Therapeutic Activities Resource | WishesWithoutBordersCo",
-              x: MARGIN,
-              y: 700,
-              width: CONTENT_WIDTH,
-              fontSize: 10,
-              font: "normal",
-              align: "center",
-              fontColor: "#FFFFFF",
-            },
-          ],
-          pageNumber: 1,
-          totalPages: job.totalPages,
-        });
-      } else if (page.metadata?.isHowToUse) {
-        // How to Use page — contained AI header + solid-white guidance area
-        const buffer = await fetchImageBuffer(page.imageUrl);
-        const tips: string[] = page.metadata.howToUse || [];
-        const contentBlocks: NonNullable<PageContent["contentBlocks"]> = [];
-
-        contentBlocks.push({
-          text: "How to Use This Resource",
-          x: MARGIN,
-          y: ACTIVITY_CONTENT_START_Y,
-          width: CONTENT_WIDTH,
-          fontSize: 22,
-          font: "bold",
-          align: "center",
-          fontColor: "#2c3e50",
-        });
-
-        contentBlocks.push({
-          text: `Designed for: ${opts.target} \u2022 Ages: ${opts.ageRange}`,
-          x: MARGIN,
-          y: ACTIVITY_CONTENT_START_Y + 36,
-          width: CONTENT_WIDTH,
-          fontSize: 11,
-          font: "normal",
-          align: "center",
-          fontColor: "#555555",
-        });
-
-        tips.forEach((tip: string, idx: number) => {
-          contentBlocks.push({
-            text: `\u2713 ${scrubPlaceholders(tip)}`,
-            x: MARGIN + 10,
-            y: ACTIVITY_CONTENT_START_Y + 76 + idx * 70,
-            width: CONTENT_WIDTH - 20,
-            fontSize: 12,
-            font: "normal",
-            align: "left",
-            fontColor: "#333333",
-          });
-        });
-
-        contentBlocks.push({
-          text: "Remember: Every child is unique. Adapt activities to individual needs and comfort levels.",
-          x: MARGIN,
-          y: PAGE_HEIGHT - 110,
-          width: CONTENT_WIDTH,
-          fontSize: 10,
-          font: "normal",
-          align: "center",
-          fontColor: "#666666",
-        });
-
-        pageContents.push({
-          imageBuffer: buffer,
-          imageHeight: ACTIVITY_IMAGE_HEIGHT,
-          contentBlocks,
-          pageNumber: page.pageNumber,
-          totalPages: job.totalPages,
-        });
-      } else {
-        // ═══════════════════════════════════════════════════════════════════
-        // ACTIVITY PAGE — Contained AI header + solid-white activity area
-        // ═══════════════════════════════════════════════════════════════════
-        const buffer = await fetchImageBuffer(page.imageUrl);
-        const ac = page.metadata?.activityContent || {};
-        const contentBlocks: NonNullable<PageContent["contentBlocks"]> = [];
-
-        // ── Activity title ──
-        contentBlocks.push({
-          text: scrubPlaceholders(ac.activityName) || "Activity",
-          x: MARGIN - 10,
-          y: ACTIVITY_CONTENT_START_Y,
-          width: CONTENT_WIDTH + 20,
-          fontSize: 18,
-          font: "bold",
-          align: "center",
-          fontColor: "#2c3e50",
-        });
-
-        // ── Target info ──
-        contentBlocks.push({
-          text: scrubPlaceholders(ac.targetInfo) || "",
-          x: MARGIN,
-          y: ACTIVITY_CONTENT_START_Y + 32,
-          width: CONTENT_WIDTH,
-          fontSize: 9,
-          font: "normal",
-          align: "center",
-          fontColor: "#555555",
-        });
-
-        // ── Materials section ──
-        const materials: string[] = ac.materials || [];
-        const materialsText = "Materials Needed:\n" +
-          (materials.length
-            ? materials.map((m: string) => `  \u2022 ${scrubPlaceholders(m)}`).join("\n")
-            : "  \u2022 None required");
-
-        contentBlocks.push({
-          text: materialsText,
-          x: MARGIN,
-          y: ACTIVITY_CONTENT_START_Y + 64,
-          width: CONTENT_WIDTH,
-          fontSize: 10,
-          font: "normal",
-          align: "left",
-          fontColor: "#1a1a1a",
-        });
-
-        // ── Steps section ──
-        const steps: string[] = ac.steps || [];
-        const stepsText = "Instructions:\n\n" +
-          (steps.length
-            ? steps.map((s: string, i: number) => `${i + 1}. ${scrubPlaceholders(s)}`).join("\n\n")
-            : "1. Follow the activity as shown.");
-
-        // Calculate Y position based on materials
-        const materialsHeight = 44 + materials.length * 14;
-        const stepsY = ACTIVITY_CONTENT_START_Y + 64 + materialsHeight + 8;
-
-        contentBlocks.push({
-          text: stepsText,
-          x: MARGIN,
-          y: stepsY,
-          width: CONTENT_WIDTH,
-          fontSize: 11,
-          font: "normal",
-          align: "left",
-          fontColor: "#1a1a1a",
-        });
-
-        // ── Professional tip at bottom ──
-        if (ac.tip) {
-          contentBlocks.push({
-            text: `Tip: ${scrubPlaceholders(ac.tip)}`,
-            x: MARGIN,
-            y: PAGE_HEIGHT - 90,
-            width: CONTENT_WIDTH,
-            fontSize: 10,
-            font: "normal",
-            align: "center",
-            fontColor: "#3E2723",
-          });
-        }
-
-        // ── Footer ──
-        contentBlocks.push({
-          text: `${opts.activityType} | ${opts.target} | Ages ${opts.ageRange}`,
-          x: MARGIN,
-          y: PAGE_HEIGHT - 40,
-          width: CONTENT_WIDTH,
-          fontSize: 8,
-          font: "normal",
-          align: "center",
-          fontColor: "#555555",
-        });
-
-        pageContents.push({
-          imageBuffer: buffer,
-          imageHeight: ACTIVITY_IMAGE_HEIGHT,
-          contentBlocks,
-          pageNumber: page.pageNumber,
-          totalPages: job.totalPages,
-        });
-      }
-    }
-
-    const pdfBuffer = await assemblePdf(pageContents);
-
-    const { url: pdfUrl } = await storagePut(
-      `products/${job.generatorType}/${job.filename}`,
-      pdfBuffer,
-      "application/pdf"
-    );
-
-    const coverUrl = successPages[0]?.imageUrl || null;
-
-    updateJob(job.id, {
-      status: successPages.length === job.totalPages ? "complete" : "partial",
-      pdfUrl,
-      coverImageUrl: coverUrl,
-      statusMessage: "PDF ready for download!",
-    });
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : "PDF assembly failed";
-    updateJob(job.id, { status: "error", errorMessage: errorMsg });
+    await finalizePdf(updatedJob);
   }
 }
 

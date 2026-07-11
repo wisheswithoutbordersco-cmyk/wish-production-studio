@@ -2,14 +2,8 @@
  * Brain Training Generator
  * Generates bilateral coordination, stroke practice, and fine motor skills worksheets.
  */
-import { buildImagePrompt, generatePageImage, processChunk, resolveCreativeDirection } from "./shared";
-import { createJob, getJob, updateJob, addPageResult, type GenerationJob, type PageResult } from "../jobs";
-import { assemblePdf, fetchImageBuffer, PageContent } from "../pdfAssembly";
-import { storagePut } from "../storage";
-
-const PAGE_WIDTH = 612;
-const ACTIVITY_IMAGE_HEIGHT = 650;
-const ACTIVITY_TEXT_START_Y = ACTIVITY_IMAGE_HEIGHT + 12;
+import { generateFullPageImage, processChunk } from "./shared";
+import { createJob, getJob, type GenerationJob, type PageResult } from "../jobs";
 
 // Short, child-facing instruction for each activity type so every page tells
 // the learner what to do (fixes "no instructions" symptom).
@@ -87,27 +81,31 @@ async function generateBrainTrainingPage(pageIndex: number, job: GenerationJob):
   const opts = job.options as BrainTrainingOptions;
   const activityPrompt = getActivityPrompt(opts.activityType, pageIndex);
   const difficultyMod = getDifficultyModifier(opts.difficulty, pageIndex, job.totalPages);
-
-  // Determine if this is a maze page and add explicit maze constraints
   const isMaze = activityPrompt.toLowerCase().includes("maze");
-  const mazeConstraint = isMaze
-    ? " The maze path must be clearly traceable from START to FINISH with one correct solution. Keep paths wide and unobstructed. Dinosaurs and decorative elements go AROUND the maze borders, not overlapping the paths. The maze grid must be the primary element taking up 80% of the page."
-    : "";
-
-  const prompt = buildImagePrompt({
-    subject: `${resolveCreativeDirection(opts.customPrompt, activityPrompt)}, ${difficultyMod}`,
-    theme: opts.customPrompt ? undefined : opts.theme,
-    culturalVariant: opts.customPrompt ? undefined : opts.culturalVariant,
-    ageRange: opts.ageRange,
-    additionalDetails: `black and white line art worksheet design with clear activity paths, no shading, high contrast for printing${mazeConstraint}`,
-  });
-
-  const { imageUrl } = await generatePageImage(prompt);
-
-  // Build a human-readable activity name and an instruction line so the
-  // finalizer can overlay them — this is what was missing before.
-  const activityName = `${opts.activityType} \u2014 ${difficultyMod.split(",")[0]}`;
+  const activityName = `${opts.activityType} — ${difficultyMod.split(",")[0]}`;
   const instruction = getActivityInstruction(opts.activityType);
+  const exactText = [activityName, instruction];
+  if (isMaze) exactText.push("START", "FINISH");
+
+  const { imageUrl } = await generateFullPageImage({
+    generatorType: "brain-training worksheet",
+    pageType: `${opts.activityType} exercise ${pageIndex + 1}`,
+    pageNumber: pageIndex + 1,
+    totalPages: job.totalPages,
+    audience: `${opts.ageRange} learners`,
+    creativeDirection: `${activityPrompt}; ${difficultyMod}; ${opts.theme} theme; ${opts.culturalVariant} cultural representation`,
+    customPrompt: opts.customPrompt,
+    exactText,
+    layoutGuidance: "Create a complete portrait activity sheet with a bold title and concise instruction panel at the top, then make the functional tracing, coordination, cutting, dot-to-dot, or maze exercise the dominant element filling most of the page. Keep the exercise centered, large, and unobstructed, with a compact branded footer.",
+    styleGuidance: "Clean high-contrast black-and-white line-art worksheet, professional occupational-therapy resource typography, thick print-safe outlines, minimal visual clutter, small themed mascot or border accents only where they do not interfere with the activity.",
+    functionalRequirements: [
+      "All tracing and cutting paths must be continuous, clearly visible, and practical to complete with a pencil or scissors.",
+      isMaze
+        ? "The maze must occupy about 75 percent of the usable page, have one clearly traceable solution from START to FINISH, use wide unobstructed paths, and keep all decorative elements outside the maze grid."
+        : "The main motor-skills exercise must occupy about 75 percent of the usable page with ample hand-movement space.",
+      "Do not add shading or decorative marks inside functional paths.",
+    ],
+  });
 
   return {
     pageNumber: pageIndex + 1,
@@ -115,83 +113,6 @@ async function generateBrainTrainingPage(pageIndex: number, job: GenerationJob):
     status: "success",
     metadata: { activityName, instruction },
   };
-}
-
-/**
- * Custom finalizer for brain training. The shared finalizer placed the image
- * with no text, which is why pages looked half-filled and had no instructions.
- * This version keeps the generated exercise large while placing the title
- * and instruction in a separate solid-white band below the image.
- */
-async function finalizeBrainTrainingPdf(job: GenerationJob): Promise<void> {
-  updateJob(job.id, { statusMessage: "Assembling brain training PDF..." });
-
-  const successPages = job.pageResults.filter((r) => r.status === "success");
-  if (successPages.length === 0) {
-    updateJob(job.id, { status: "error", errorMessage: "No pages were generated successfully." });
-    return;
-  }
-
-  try {
-    const opts = job.options as BrainTrainingOptions;
-    const pageContents: PageContent[] = [];
-
-    for (const page of successPages) {
-      const buffer = await fetchImageBuffer(page.imageUrl);
-      const activityName: string = page.metadata?.activityName || opts.activityType;
-      const instruction: string =
-        page.metadata?.instruction || getActivityInstruction(opts.activityType);
-
-      const contentBlocks: NonNullable<PageContent["contentBlocks"]> = [
-        {
-          text: activityName,
-          x: 30,
-          y: ACTIVITY_TEXT_START_Y,
-          width: PAGE_WIDTH - 60,
-          fontSize: 16,
-          font: "bold",
-          align: "center",
-          fontColor: "#1a1a1a",
-        },
-        {
-          text: instruction,
-          x: 30,
-          y: ACTIVITY_TEXT_START_Y + 28,
-          width: PAGE_WIDTH - 60,
-          fontSize: 11,
-          font: "normal",
-          align: "center",
-          fontColor: "#333333",
-        },
-      ];
-
-      pageContents.push({
-        imageBuffer: buffer,
-        imageHeight: ACTIVITY_IMAGE_HEIGHT,
-        contentBlocks,
-        pageNumber: page.pageNumber,
-        totalPages: job.totalPages,
-      });
-    }
-
-    const pdfBuffer = await assemblePdf(pageContents);
-    const { url: pdfUrl } = await storagePut(
-      `products/${job.generatorType}/${job.filename}`,
-      pdfBuffer,
-      "application/pdf"
-    );
-    const coverUrl = successPages[0]?.imageUrl || null;
-
-    updateJob(job.id, {
-      status: successPages.length === job.totalPages ? "complete" : "partial",
-      pdfUrl,
-      coverImageUrl: coverUrl,
-      statusMessage: "PDF ready for download!",
-    });
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : "PDF assembly failed";
-    updateJob(job.id, { status: "error", errorMessage: errorMsg });
-  }
 }
 
 export function createBrainTrainingJob(options: BrainTrainingOptions): string {
@@ -207,7 +128,5 @@ export function createBrainTrainingJob(options: BrainTrainingOptions): string {
 export async function processBrainTrainingChunk(jobId: string): Promise<void> {
   const job = getJob(jobId);
   if (!job) throw new Error("Job not found");
-  // Use the shared chunk loop (unchanged architecture / PAGES_PER_CHUNK) for
-  // page generation, but finalize with our instruction-overlay PDF builder.
-  await processChunk(job, generateBrainTrainingPage, finalizeBrainTrainingPdf);
+  await processChunk(job, generateBrainTrainingPage);
 }

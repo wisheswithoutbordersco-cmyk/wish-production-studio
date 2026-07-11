@@ -1,22 +1,12 @@
 /**
  * Worksheet Generator
  *
- * Strategy:
- * - COVER page: Full-page AI illustration with title overlay
- * - CONTENT pages: AI illustration contained in a top header with all
- *   worksheet text and answer lines rendered on solid white below.
+ * Every cover and worksheet page is generated as one complete portrait image.
+ * GPT-4o specifies the exact copy, layout, typography, answer areas, decoration,
+ * branding, and page number; FLUX renders the complete final printable page.
  */
-import { buildImagePrompt, generatePageImage, generateContent, customPromptInstruction, resolveCreativeDirection } from "./shared";
+import { generateFullPageImage, generateContent, customPromptInstruction, finalizePdf } from "./shared";
 import { createJob, getJob, updateJob, addPageResult, type GenerationJob, type PageResult } from "../jobs";
-import { assemblePdf, fetchImageBuffer, PageContent } from "../pdfAssembly";
-import { storagePut } from "../storage";
-
-const PAGE_WIDTH = 612;
-const PAGE_HEIGHT = 792;
-const MARGIN = 50;
-const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
-const ACTIVITY_IMAGE_HEIGHT = 200;
-const ACTIVITY_CONTENT_START_Y = ACTIVITY_IMAGE_HEIGHT + 16;
 
 export interface WorksheetOptions {
   customPrompt?: string;
@@ -136,40 +126,60 @@ RULES:
 
 async function generateWorksheetPage(pageIndex: number, job: GenerationJob): Promise<PageResult> {
   const opts = job.options as WorksheetOptions;
+  const pageNumber = pageIndex + 1;
 
   if (pageIndex === 0) {
-    // Cover page — full AI image
-    const prompt = buildImagePrompt({
-      subject: resolveCreativeDirection(opts.customPrompt, `colorful educational workbook cover with ${opts.subject.toLowerCase()} themed elements and decorative patterns`),
-      theme: opts.customPrompt ? undefined : opts.theme,
-      additionalDetails: `professional educational worksheet cover design, vibrant and appealing for ${opts.gradeLevel} students, child-friendly`,
+    const { imageUrl } = await generateFullPageImage({
+      generatorType: "educational worksheet set",
+      pageType: "front cover",
+      pageNumber,
+      totalPages: job.totalPages,
+      audience: `${opts.gradeLevel} students`,
+      creativeDirection: `A colorful ${opts.subject} worksheet collection focused on ${opts.specificSkill}, with a ${opts.theme} theme`,
+      customPrompt: opts.customPrompt,
+      exactText: [opts.subject, opts.specificSkill, `Grade: ${opts.gradeLevel}`, "Worksheet Collection"],
+      layoutGuidance: "Create a polished portrait cover with a strong title hierarchy, a visible skill subtitle and grade badge, integrated subject-specific illustrations, and balanced themed decorations. Keep branding at the bottom inside safe margins.",
+      styleGuidance: "Premium classroom-resource cover design with bold friendly display lettering, clean supporting typography, vibrant print-friendly colors, decorative icons, borders, and a cohesive professional finish.",
+      functionalRequirements: ["The cover must remain clear and attractive at thumbnail size."],
     });
-    const { imageUrl } = await generatePageImage(prompt);
-    return {
-      pageNumber: 1,
-      imageUrl,
-      status: "success",
-      metadata: { isCover: true },
-    };
+
+    return { pageNumber, imageUrl, status: "success", metadata: { isCover: true } };
   }
 
-  // Content pages — AI header illustration + GPT content
-  const prompt = buildImagePrompt({
-    subject: resolveCreativeDirection(opts.customPrompt, `educational header illustration for a ${opts.subject} ${opts.specificSkill} worksheet`),
-    theme: opts.customPrompt ? undefined : opts.theme,
-    additionalDetails: `themed illustration composed for the top quarter of a portrait worksheet page, important subjects centered and fully visible, no text or lettering, suitable for ${opts.gradeLevel} grade level, print-ready`,
-  });
-  const { imageUrl } = await generatePageImage(prompt);
-
-  // Generate GPT educational content
   const worksheetContent = await generateWorksheetContent(opts, pageIndex - 1);
+  const items = worksheetContent.items
+    .map(item => scrubPlaceholders(item))
+    .filter(item => item.length > 0);
+  const exactText = [
+    "Name: ____________________    Date: ____________",
+    scrubPlaceholders(worksheetContent.title) || "Practice",
+    `${worksheetContent.activityType.toUpperCase()}: ${scrubPlaceholders(worksheetContent.instructions) || "Complete the activity below."}`,
+    ...items.flatMap((item, index) => [
+      `${index + 1}. ${item}`,
+      "Answer: ______________________________",
+    ]),
+    `${opts.subject} | ${opts.specificSkill} | ${opts.gradeLevel}`,
+  ];
 
-  return {
-    pageNumber: pageIndex + 1,
-    imageUrl,
-    status: "success",
-    metadata: { worksheetContent },
-  };
+  const { imageUrl } = await generateFullPageImage({
+    generatorType: "educational worksheet",
+    pageType: `${worksheetContent.activityType} practice page ${pageIndex}`,
+    pageNumber,
+    totalPages: job.totalPages,
+    audience: `${opts.gradeLevel} students`,
+    creativeDirection: `${opts.theme}-themed ${opts.subject} worksheet focused on ${opts.specificSkill}`,
+    customPrompt: opts.customPrompt,
+    exactText,
+    layoutGuidance: "Create a complete portrait worksheet with a slim name/date row, a prominent themed title banner, a clearly separated instruction box, and the numbered problems arranged in spacious rows or activity cards. Put a writable answer line immediately under each item and a small subject/skill/grade footer at the bottom.",
+    styleGuidance: "Crisp teacher-created resource design with friendly educational typography, strong contrast, consistent numbered problem styling, coordinated boxes and dividers, small themed icons or mascot accents, and generous white writing space.",
+    functionalRequirements: [
+      "All questions, choices, blanks, punctuation, and answer lines must remain fully visible and usable.",
+      "Decoration must stay outside functional text and writing areas.",
+      "Preserve underscores, answer choices, arrows, and mathematical symbols exactly.",
+    ],
+  });
+
+  return { pageNumber, imageUrl, status: "success", metadata: { worksheetContent } };
 }
 
 /**
@@ -207,208 +217,7 @@ async function processWorksheetChunkInternal(job: GenerationJob): Promise<void> 
 
   const updatedJob = getJob(job.id);
   if (updatedJob && updatedJob.nextPageIndex >= updatedJob.totalPages) {
-    await finalizeWorksheetPdf(updatedJob);
-  }
-}
-
-/**
- * Assemble the worksheet PDF — full-page cover art and contained activity
- * illustrations above a solid-white worksheet area.
- */
-async function finalizeWorksheetPdf(job: GenerationJob): Promise<void> {
-  updateJob(job.id, { statusMessage: "Assembling PDF..." });
-
-  const successPages = job.pageResults.filter(r => r.status === "success");
-  if (successPages.length === 0) {
-    updateJob(job.id, { status: "error", errorMessage: "No pages were generated successfully." });
-    return;
-  }
-
-  try {
-    const opts = job.options as WorksheetOptions;
-    const pageContents: PageContent[] = [];
-
-    for (const page of successPages) {
-      const buffer = await fetchImageBuffer(page.imageUrl);
-
-      if (page.metadata?.isCover) {
-        // Cover page — full AI image with title overlay
-        pageContents.push({
-          imageBuffer: buffer,
-          contentBlocks: [
-            {
-              text: opts.subject,
-              x: MARGIN,
-              y: 240,
-              width: CONTENT_WIDTH,
-              fontSize: 34,
-              font: "bold",
-              align: "center",
-              fontColor: "#FFFFFF",
-              backgroundColor: "rgba(0,0,0,0.5)",
-              padding: 16,
-              radius: 8,
-            },
-            {
-              text: opts.specificSkill,
-              x: MARGIN,
-              y: 310,
-              width: CONTENT_WIDTH,
-              fontSize: 20,
-              font: "normal",
-              align: "center",
-              fontColor: "#FFFFFF",
-              backgroundColor: "rgba(0,0,0,0.35)",
-              padding: 8,
-              radius: 6,
-            },
-            {
-              text: `Grade: ${opts.gradeLevel} | Worksheets`,
-              x: MARGIN,
-              y: 355,
-              width: CONTENT_WIDTH,
-              fontSize: 14,
-              font: "normal",
-              align: "center",
-              fontColor: "#FFFFFF",
-            },
-            {
-              text: "WishesWithoutBordersCo",
-              x: MARGIN,
-              y: 700,
-              width: CONTENT_WIDTH,
-              fontSize: 11,
-              font: "normal",
-              align: "center",
-              fontColor: "#FFFFFF",
-            },
-          ],
-          pageNumber: 1,
-          totalPages: job.totalPages,
-        });
-      } else {
-        // ═══════════════════════════════════════════════════════════════════
-        // CONTENT PAGE — Contained AI header + solid-white worksheet area
-        // ═══════════════════════════════════════════════════════════════════
-        const wc = page.metadata?.worksheetContent || {};
-        const contentBlocks: NonNullable<PageContent["contentBlocks"]> = [];
-
-        // ── Name/Date line ──
-        contentBlocks.push({
-          text: "Name: ________________  Date: ________",
-          x: MARGIN,
-          y: ACTIVITY_CONTENT_START_Y,
-          width: CONTENT_WIDTH,
-          fontSize: 10,
-          font: "normal",
-          align: "left",
-          fontColor: "#444444",
-        });
-
-        // ── Title ──
-        contentBlocks.push({
-          text: scrubPlaceholders(wc.title) || "Practice",
-          x: MARGIN,
-          y: ACTIVITY_CONTENT_START_Y + 28,
-          width: CONTENT_WIDTH,
-          fontSize: 20,
-          font: "bold",
-          align: "center",
-          fontColor: "#1a1a1a",
-        });
-
-        // ── Activity type + Instructions ──
-        const instrText = scrubPlaceholders(wc.instructions) || "Complete the activity below.";
-        contentBlocks.push({
-          text: `${wc.activityType ? wc.activityType.toUpperCase() + ": " : ""}${instrText}`,
-          x: MARGIN,
-          y: ACTIVITY_CONTENT_START_Y + 66,
-          width: CONTENT_WIDTH,
-          fontSize: 11,
-          font: "bold",
-          align: "left",
-          fontColor: "#1a1a1a",
-        });
-
-        // ── Activity items ──
-        const items: string[] = Array.isArray(wc.items) ? wc.items : [];
-        const cleanItems = items
-          .map((it: string) => scrubPlaceholders(it))
-          .filter((it: string) => it.trim().length > 0);
-
-        const ITEMS_START_Y = ACTIVITY_CONTENT_START_Y + 110;
-        const ITEMS_END_Y = PAGE_HEIGHT - 62;
-        const itemCount = Math.max(cleanItems.length, 1);
-        const spacing = Math.min(85, (ITEMS_END_Y - ITEMS_START_Y) / itemCount);
-
-        cleanItems.forEach((item: string, idx: number) => {
-          const yPos = ITEMS_START_Y + idx * spacing;
-
-          contentBlocks.push({
-            text: `${idx + 1}.  ${item}`,
-            x: MARGIN,
-            y: yPos,
-            width: CONTENT_WIDTH,
-            fontSize: 12,
-            font: "normal",
-            align: "left",
-            fontColor: "#1a1a1a",
-          });
-
-          // Answer line
-          contentBlocks.push({
-            text: "_______________________________________________",
-            x: MARGIN + 20,
-            y: yPos + 32,
-            width: CONTENT_WIDTH - 40,
-            fontSize: 11,
-            font: "normal",
-            align: "left",
-            fontColor: "#BBBBBB",
-          });
-        });
-
-        // ── Footer ──
-        contentBlocks.push({
-          text: `${opts.subject} | ${opts.specificSkill} | ${opts.gradeLevel}`,
-          x: MARGIN,
-          y: PAGE_HEIGHT - 38,
-          width: CONTENT_WIDTH,
-          fontSize: 8,
-          font: "normal",
-          align: "center",
-          fontColor: "#555555",
-        });
-
-        pageContents.push({
-          imageBuffer: buffer,
-          imageHeight: ACTIVITY_IMAGE_HEIGHT,
-          contentBlocks,
-          pageNumber: page.pageNumber,
-          totalPages: job.totalPages,
-        });
-      }
-    }
-
-    const pdfBuffer = await assemblePdf(pageContents);
-
-    const { url: pdfUrl } = await storagePut(
-      `products/${job.generatorType}/${job.filename}`,
-      pdfBuffer,
-      "application/pdf"
-    );
-
-    const coverUrl = successPages[0]?.imageUrl || null;
-
-    updateJob(job.id, {
-      status: successPages.length === job.totalPages ? "complete" : "partial",
-      pdfUrl,
-      coverImageUrl: coverUrl,
-      statusMessage: "PDF ready for download!",
-    });
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : "PDF assembly failed";
-    updateJob(job.id, { status: "error", errorMessage: errorMsg });
+    await finalizePdf(updatedJob);
   }
 }
 

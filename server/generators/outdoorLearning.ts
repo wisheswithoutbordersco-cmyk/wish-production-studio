@@ -1,15 +1,12 @@
 /**
  * Outdoor Learning Generator
  *
- * Strategy:
- * - COVER page: Full-page AI nature scene with title overlay
- * - CONTENT pages: AI nature illustration contained in a top header with
- *   all activity text rendered on solid white below.
+ * Every cover and activity page is generated as one complete portrait image.
+ * GPT-4o defines the exact content, nature-themed layout, typography, activity
+ * spaces, decoration, branding, and page number for FLUX to render directly.
  */
-import { buildImagePrompt, generatePageImage, generateContent, customPromptInstruction, resolveCreativeDirection } from "./shared";
+import { generateFullPageImage, generateContent, customPromptInstruction, finalizePdf } from "./shared";
 import { createJob, getJob, updateJob, addPageResult, type GenerationJob, type PageResult } from "../jobs";
-import { assemblePdf, fetchImageBuffer, PageContent } from "../pdfAssembly";
-import { storagePut } from "../storage";
 
 export interface OutdoorLearningOptions {
   customPrompt?: string;
@@ -20,13 +17,6 @@ export interface OutdoorLearningOptions {
   culturalConnection: string;
   pageCount: number;
 }
-
-const PAGE_WIDTH = 612;
-const PAGE_HEIGHT = 792;
-const MARGIN = 50;
-const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
-const ACTIVITY_IMAGE_HEIGHT = 200;
-const ACTIVITY_CONTENT_START_Y = ACTIVITY_IMAGE_HEIGHT + 16;
 
 const ACTIVITY_THEMES: Record<string, string[]> = {
   "Scavenger Hunt": [
@@ -161,44 +151,61 @@ NEVER include placeholder text like "[Picture of...]" or "(insert image)".`;
 
 async function generateOutdoorPage(pageIndex: number, job: GenerationJob): Promise<PageResult> {
   const opts = job.options as OutdoorLearningOptions;
+  const pageNumber = pageIndex + 1;
 
   if (pageIndex === 0) {
-    // Cover page — full AI nature scene
-    const prompt = buildImagePrompt({
-      subject: resolveCreativeDirection(opts.customPrompt, `beautiful ${opts.season} ${opts.biome} landscape scene with children exploring nature, outdoor education themed`),
-      culturalVariant: opts.customPrompt ? undefined : opts.culturalConnection,
-      additionalDetails: `vibrant nature scene, educational and inviting, child-friendly outdoor adventure${opts.customPrompt ? "" : `, ${opts.season} season, ${opts.biome} environment`}`,
+    const { imageUrl } = await generateFullPageImage({
+      generatorType: "outdoor learning activity book",
+      pageType: "front cover",
+      pageNumber,
+      totalPages: job.totalPages,
+      audience: `children ages ${opts.ageRange}`,
+      creativeDirection: `${opts.activityType} outdoor education in a ${opts.season} ${opts.biome} setting${opts.culturalConnection && opts.culturalConnection !== "None" ? ` with ${opts.culturalConnection} cultural connections` : ""}`,
+      customPrompt: opts.customPrompt,
+      exactText: [opts.activityType, `${opts.season} | ${opts.biome}`, `Ages: ${opts.ageRange}`, "Outdoor Learning Resource"],
+      layoutGuidance: "Create an inviting portrait cover with a large activity-book title, season and biome subtitle, visible age badge, children exploring nature, accurate local plants and animals, and branding at the bottom within safe margins.",
+      styleGuidance: "Premium nature-education publishing design with expressive organic title lettering, clean supporting typography, rich botanical borders, field-journal accents, coordinated natural colors, and a professional print-ready finish.",
+      functionalRequirements: ["The cover must remain easy to read at thumbnail size."],
     });
-    const { imageUrl } = await generatePageImage(prompt);
-    return {
-      pageNumber: 1,
-      imageUrl,
-      status: "success",
-      metadata: { isCover: true },
-    };
+
+    return { pageNumber, imageUrl, status: "success", metadata: { isCover: true } };
   }
 
-  // Activity pages — AI nature header illustration + GPT content
   const themes = ACTIVITY_THEMES[opts.activityType] || ACTIVITY_THEMES["Scavenger Hunt"];
   const theme = themes[(pageIndex - 1) % themes.length];
-
-  const prompt = buildImagePrompt({
-    subject: resolveCreativeDirection(opts.customPrompt, `${opts.season} ${opts.biome} nature scene illustration related to ${theme}`),
-    culturalVariant: opts.customPrompt ? undefined : opts.culturalConnection,
-    ageRange: opts.ageRange,
-    additionalDetails: `nature-themed educational header illustration composed for the top quarter of a portrait activity page, important subjects centered and fully visible, no text or lettering, detailed botanical and zoological accuracy${opts.customPrompt ? "" : `, ${opts.season} season atmosphere`}`,
-  });
-  const { imageUrl } = await generatePageImage(prompt);
-
-  // Generate structured activity content
   const activityContent = await generateActivityContent(opts, pageIndex - 1);
+  const materials = activityContent.materials.map(item => scrubPlaceholders(item)).filter(Boolean);
+  const steps = activityContent.steps.map(item => scrubPlaceholders(item)).filter(Boolean);
+  const exactText = [
+    scrubPlaceholders(activityContent.activityName) || "Outdoor Activity",
+    `Objective: ${scrubPlaceholders(activityContent.objective)}`,
+    "Materials Needed:",
+    ...materials.map(item => `• ${item}`),
+    "Steps:",
+    ...steps.map((step, index) => `${index + 1}. ${step}`),
+    `Fun Fact: ${scrubPlaceholders(activityContent.funFact)}`,
+    `${opts.activityType} | ${opts.season} | ${opts.biome} | Ages ${opts.ageRange}`,
+  ];
 
-  return {
-    pageNumber: pageIndex + 1,
-    imageUrl,
-    status: "success",
-    metadata: { activityContent },
-  };
+  const { imageUrl } = await generateFullPageImage({
+    generatorType: "outdoor learning activity page",
+    pageType: `${theme} activity ${pageIndex}`,
+    pageNumber,
+    totalPages: job.totalPages,
+    audience: `children ages ${opts.ageRange}`,
+    creativeDirection: `${theme} in a ${opts.season} ${opts.biome} environment${opts.culturalConnection && opts.culturalConnection !== "None" ? ` with ${opts.culturalConnection} cultural connections` : ""}`,
+    customPrompt: opts.customPrompt,
+    exactText,
+    layoutGuidance: "Build a complete portrait activity page with a nature-illustrated title banner, an objective callout, a compact materials checklist, a large numbered how-to section with clear spacing between steps, and a distinct fun-fact box near the bottom. Integrate accurate plants, animals, field-guide icons, and a small footer without covering text.",
+    styleGuidance: "Professional outdoor-education resource with warm readable typography, natural greens and seasonal accent colors, field-journal boxes, botanical dividers, hand-drawn nature icons, and a polished child-friendly editorial layout.",
+    functionalRequirements: [
+      "Every material and numbered step must be fully visible, correctly ordered, and easy for a child and adult to follow outdoors.",
+      "Keep decorative wildlife and foliage outside all text blocks.",
+      "Maintain strong print contrast and avoid overly dark backgrounds behind body text.",
+    ],
+  });
+
+  return { pageNumber, imageUrl, status: "success", metadata: { activityContent } };
 }
 
 /**
@@ -236,208 +243,7 @@ async function processOutdoorLearningChunkInternal(job: GenerationJob): Promise<
 
   const updatedJob = getJob(job.id);
   if (updatedJob && updatedJob.nextPageIndex >= updatedJob.totalPages) {
-    await finalizeOutdoorLearningPdf(updatedJob);
-  }
-}
-
-/**
- * Assemble the outdoor learning PDF — full-page cover art and contained
- * nature illustrations above a solid-white activity area.
- */
-async function finalizeOutdoorLearningPdf(job: GenerationJob): Promise<void> {
-  updateJob(job.id, { statusMessage: "Assembling outdoor learning PDF..." });
-
-  const successPages = job.pageResults.filter(r => r.status === "success");
-  if (successPages.length === 0) {
-    updateJob(job.id, { status: "error", errorMessage: "No pages were generated successfully." });
-    return;
-  }
-
-  try {
-    const opts = job.options as OutdoorLearningOptions;
-    const pageContents: PageContent[] = [];
-
-    for (const page of successPages) {
-      const buffer = await fetchImageBuffer(page.imageUrl);
-
-      if (page.metadata?.isCover) {
-        // Cover page — full AI image with title overlay
-        pageContents.push({
-          imageBuffer: buffer,
-          contentBlocks: [
-            {
-              text: opts.activityType,
-              x: MARGIN,
-              y: 250,
-              width: CONTENT_WIDTH,
-              fontSize: 30,
-              font: "bold",
-              align: "center",
-              fontColor: "#FFFFFF",
-              backgroundColor: "rgba(0,0,0,0.5)",
-              padding: 16,
-              radius: 8,
-            },
-            {
-              text: `${opts.season} | ${opts.biome}`,
-              x: MARGIN,
-              y: 315,
-              width: CONTENT_WIDTH,
-              fontSize: 16,
-              font: "normal",
-              align: "center",
-              fontColor: "#FFFFFF",
-              backgroundColor: "rgba(0,0,0,0.35)",
-              padding: 8,
-              radius: 6,
-            },
-            {
-              text: `Ages: ${opts.ageRange}`,
-              x: MARGIN,
-              y: 358,
-              width: CONTENT_WIDTH,
-              fontSize: 13,
-              font: "normal",
-              align: "center",
-              fontColor: "#FFFFFF",
-            },
-            {
-              text: "WishesWithoutBordersCo",
-              x: MARGIN,
-              y: 700,
-              width: CONTENT_WIDTH,
-              fontSize: 11,
-              font: "normal",
-              align: "center",
-              fontColor: "#FFFFFF",
-            },
-          ],
-          pageNumber: 1,
-          totalPages: job.totalPages,
-        });
-      } else {
-        // ═══════════════════════════════════════════════════════════════════
-        // CONTENT PAGE — Contained AI header + solid-white activity area
-        // ═══════════════════════════════════════════════════════════════════
-        const ac = page.metadata?.activityContent || {};
-        const contentBlocks: NonNullable<PageContent["contentBlocks"]> = [];
-
-        // ── Activity name header ──
-        contentBlocks.push({
-          text: scrubPlaceholders(ac.activityName) || "Outdoor Activity",
-          x: MARGIN - 10,
-          y: ACTIVITY_CONTENT_START_Y,
-          width: CONTENT_WIDTH + 20,
-          fontSize: 18,
-          font: "bold",
-          align: "center",
-          fontColor: "#1a1a1a",
-        });
-
-        // ── Objective ──
-        contentBlocks.push({
-          text: `Objective: ${scrubPlaceholders(ac.objective) || ""}`,
-          x: MARGIN,
-          y: ACTIVITY_CONTENT_START_Y + 32,
-          width: CONTENT_WIDTH,
-          fontSize: 10,
-          font: "normal",
-          align: "center",
-          fontColor: "#333333",
-        });
-
-        // ── Materials section ──
-        const materials: string[] = ac.materials || [];
-        const materialsText = "Materials Needed:\n" +
-          (materials.length ? materials.map((m: string) => `  \u2022 ${scrubPlaceholders(m)}`).join("\n") : "  \u2022 None");
-        contentBlocks.push({
-          text: materialsText,
-          x: MARGIN,
-          y: ACTIVITY_CONTENT_START_Y + 68,
-          width: CONTENT_WIDTH,
-          fontSize: 11,
-          font: "normal",
-          align: "left",
-          fontColor: "#1a1a1a",
-        });
-
-        // ── Steps section ──
-        const steps: string[] = ac.steps || [];
-        const stepsText = "Steps:\n" +
-          (steps.length
-            ? steps.map((s: string, i: number) => `${i + 1}. ${scrubPlaceholders(s)}`).join("\n\n")
-            : "1. Go outside and explore!");
-
-        // Calculate Y position based on materials length
-        const materialsHeight = 44 + materials.length * 14;
-        const stepsY = ACTIVITY_CONTENT_START_Y + 68 + materialsHeight + 8;
-
-        contentBlocks.push({
-          text: stepsText,
-          x: MARGIN,
-          y: stepsY,
-          width: CONTENT_WIDTH,
-          fontSize: 11,
-          font: "normal",
-          align: "left",
-          fontColor: "#1a1a1a",
-        });
-
-        // ── Fun Fact box at bottom ──
-        if (ac.funFact) {
-          contentBlocks.push({
-            text: `Fun Fact: ${scrubPlaceholders(ac.funFact)}`,
-            x: MARGIN,
-            y: PAGE_HEIGHT - 100,
-            width: CONTENT_WIDTH,
-            fontSize: 10,
-            font: "normal",
-            align: "center",
-            fontColor: "#3E2723",
-          });
-        }
-
-        // ── Footer ──
-        contentBlocks.push({
-          text: `${opts.activityType} | ${opts.season} | ${opts.biome} | Ages ${opts.ageRange}`,
-          x: MARGIN,
-          y: PAGE_HEIGHT - 40,
-          width: CONTENT_WIDTH,
-          fontSize: 8,
-          font: "normal",
-          align: "center",
-          fontColor: "#555555",
-        });
-
-        pageContents.push({
-          imageBuffer: buffer,
-          imageHeight: ACTIVITY_IMAGE_HEIGHT,
-          contentBlocks,
-          pageNumber: page.pageNumber,
-          totalPages: job.totalPages,
-        });
-      }
-    }
-
-    const pdfBuffer = await assemblePdf(pageContents);
-
-    const { url: pdfUrl } = await storagePut(
-      `products/${job.generatorType}/${job.filename}`,
-      pdfBuffer,
-      "application/pdf"
-    );
-
-    const coverUrl = successPages[0]?.imageUrl || null;
-
-    updateJob(job.id, {
-      status: successPages.length === job.totalPages ? "complete" : "partial",
-      pdfUrl,
-      coverImageUrl: coverUrl,
-      statusMessage: "PDF ready for download!",
-    });
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : "PDF assembly failed";
-    updateJob(job.id, { status: "error", errorMessage: errorMsg });
+    await finalizePdf(updatedJob);
   }
 }
 

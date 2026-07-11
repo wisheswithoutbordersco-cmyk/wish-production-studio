@@ -10,6 +10,7 @@ import { ENV } from "./env";
 
 export type GenerateImageOptions = {
   prompt: string;
+  aspectRatio?: string;
   originalImages?: Array<{
     url?: string;
     b64Json?: string;
@@ -88,7 +89,7 @@ export async function generateImage(
         body: JSON.stringify({
           prompt,
           num_images: 1,
-          aspect_ratio: "1:1",
+          aspect_ratio: options.aspectRatio || "1:1",
           output_format: "png",
           enhance_prompt: true,
           raw: false,
