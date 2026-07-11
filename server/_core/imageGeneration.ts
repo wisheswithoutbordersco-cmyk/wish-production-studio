@@ -1,21 +1,11 @@
 /**
- * Image generation helper using internal ImageService
+ * Image generation helper using fal.ai's FLUX Pro endpoint.
  *
  * Example usage:
  *   const { url: imageUrl } = await generateImage({
  *     prompt: "A serene landscape with mountains"
  *   });
- *
- * For editing:
- *   const { url: imageUrl } = await generateImage({
- *     prompt: "Add a rainbow to this landscape",
- *     originalImages: [{
- *       url: "https://example.com/original.jpg",
- *       mimeType: "image/jpeg"
- *     }]
- *   });
  */
-import { storagePut } from "server/storage";
 import { ENV } from "./env";
 
 export type GenerateImageOptions = {
@@ -31,62 +21,119 @@ export type GenerateImageResponse = {
   url?: string;
 };
 
-export async function generateImage(
-  options: GenerateImageOptions
-): Promise<GenerateImageResponse> {
-  if (!ENV.forgeApiUrl) {
-    throw new Error("BUILT_IN_FORGE_API_URL is not configured");
-  }
-  if (!ENV.forgeApiKey) {
-    throw new Error("BUILT_IN_FORGE_API_KEY is not configured");
-  }
+const FAL_IMAGE_ENDPOINT = "https://fal.run/fal-ai/flux-pro/v1.1-ultra";
+const MAX_RETRIES = 3;
+const BASE_RETRY_DELAY_MS = 1_000;
+const MAX_RETRY_DELAY_MS = 15_000;
 
-  // Build the full URL by appending the service path to the base URL
-  const baseUrl = ENV.forgeApiUrl.endsWith("/")
-    ? ENV.forgeApiUrl
-    : `${ENV.forgeApiUrl}/`;
-  const fullUrl = new URL(
-    "images.v1.ImageService/GenerateImage",
-    baseUrl
-  ).toString();
+const sleep = (ms: number) =>
+  new Promise<void>(resolve => setTimeout(resolve, ms));
 
-  const response = await fetch(fullUrl, {
-    method: "POST",
-    headers: {
-      accept: "application/json",
-      "content-type": "application/json",
-      "connect-protocol-version": "1",
-      authorization: `Bearer ${ENV.forgeApiKey}`,
-    },
-    body: JSON.stringify({
-      prompt: options.prompt,
-      original_images: options.originalImages || [],
-    }),
-  });
+const parseRetryAfter = (value: string | null): number | undefined => {
+  if (!value) return undefined;
 
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(
-      `Image generation request failed (${response.status} ${response.statusText})${detail ? `: ${detail}` : ""}`
-    );
-  }
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1_000);
 
-  const result = (await response.json()) as {
-    image: {
-      b64Json: string;
-      mimeType: string;
-    };
-  };
-  const base64Data = result.image.b64Json;
-  const buffer = Buffer.from(base64Data, "base64");
+  const retryAt = Date.parse(value);
+  return Number.isNaN(retryAt)
+    ? undefined
+    : Math.max(0, retryAt - Date.now());
+};
 
-  // Save to S3
-  const { url } = await storagePut(
-    `generated/${Date.now()}.png`,
-    buffer,
-    result.image.mimeType
+const computeBackoffDelay = (
+  attempt: number,
+  retryAfterMs?: number,
+): number => {
+  const exponentialDelay = Math.min(
+    BASE_RETRY_DELAY_MS * 2 ** attempt,
+    MAX_RETRY_DELAY_MS,
   );
-  return {
-    url,
-  };
+  const jitteredDelay =
+    exponentialDelay / 2 + Math.random() * (exponentialDelay / 2);
+
+  return Math.min(
+    Math.max(jitteredDelay, retryAfterMs ?? 0),
+    MAX_RETRY_DELAY_MS,
+  );
+};
+
+export async function generateImage(
+  options: GenerateImageOptions,
+): Promise<GenerateImageResponse> {
+  if (!ENV.falKey) {
+    throw new Error("FAL_KEY is not configured");
+  }
+
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const response = await fetch(FAL_IMAGE_ENDPOINT, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+          Authorization: `Key ${ENV.falKey}`,
+        },
+        body: JSON.stringify({
+          prompt: options.prompt,
+          num_images: 1,
+          image_size: "square_hd",
+          output_format: "png",
+        }),
+      });
+
+      if (response.ok) {
+        const result = (await response.json()) as {
+          images?: Array<{
+            url?: string;
+            content_type?: string;
+          }>;
+        };
+        const url = result.images?.[0]?.url;
+
+        if (!url) {
+          throw new Error("Image generation succeeded but returned no image URL");
+        }
+
+        return { url };
+      }
+
+      if (attempt === MAX_RETRIES) {
+        const detail = await response.text().catch(() => "");
+        throw new Error(
+          `Image generation request failed (${response.status} ${response.statusText})${detail ? `: ${detail}` : ""}`,
+        );
+      }
+
+      const retryAfterMs = parseRetryAfter(
+        response.headers.get("retry-after"),
+      );
+      try {
+        await response.body?.cancel();
+      } catch {
+        // The response body may already be settled.
+      }
+
+      console.warn(
+        `Image generation retry ${attempt + 1}/${MAX_RETRIES} after status ${response.status}`,
+      );
+      await sleep(computeBackoffDelay(attempt, retryAfterMs));
+    } catch (error) {
+      lastError = error;
+      if (attempt === MAX_RETRIES) {
+        throw error;
+      }
+
+      console.warn(
+        `Image generation retry ${attempt + 1}/${MAX_RETRIES} after network error`,
+      );
+      await sleep(computeBackoffDelay(attempt));
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Image generation failed after exhausting retries");
 }

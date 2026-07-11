@@ -212,14 +212,13 @@ const normalizeToolChoice = (
   return toolChoice;
 };
 
-const resolveApiUrl = () =>
-  ENV.forgeApiUrl && ENV.forgeApiUrl.trim().length > 0
-    ? `${ENV.forgeApiUrl.replace(/\/$/, "")}/v1/chat/completions`
-    : "https://forge.manus.im/v1/chat/completions";
+const OPENROUTER_CHAT_COMPLETIONS_URL =
+  "https://openrouter.ai/api/v1/chat/completions";
+const DEFAULT_MODEL = "openai/gpt-4o";
 
 const assertApiKey = () => {
-  if (!ENV.forgeApiKey) {
-    throw new Error("OPENAI_API_KEY is not configured");
+  if (!ENV.openRouterApiKey) {
+    throw new Error("OPENROUTER_API_KEY is not configured");
   }
 };
 
@@ -359,12 +358,9 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
   } = params;
 
   const payload: Record<string, unknown> = {
+    model: model || DEFAULT_MODEL,
     messages: messages.map(normalizeMessage),
   };
-
-  if (model) {
-    payload.model = model;
-  }
 
   if (tools && tools.length > 0) {
     payload.tools = tools;
@@ -401,11 +397,13 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     payload.response_format = normalizedResponseFormat;
   }
 
-  const response = await fetchWithBackoff(resolveApiUrl(), {
+  const response = await fetchWithBackoff(OPENROUTER_CHAT_COMPLETIONS_URL, {
     method: "POST",
     headers: {
+      accept: "application/json",
       "content-type": "application/json",
-      authorization: `Bearer ${ENV.forgeApiKey}`,
+      authorization: `Bearer ${ENV.openRouterApiKey}`,
+      "X-Title": "Wish Production Studio",
     },
     body: JSON.stringify(payload),
   });
@@ -433,22 +431,15 @@ export type ModelsResponse = {
 };
 
 export async function listLLMModels(): Promise<ModelsResponse> {
-  assertApiKey();
-
-  const url = ENV.forgeApiUrl && ENV.forgeApiUrl.trim().length > 0
-    ? `${ENV.forgeApiUrl.replace(/\/$/, "")}/v1/models`
-    : "https://forge.manus.im/v1/models";
-
-  const response = await fetchWithBackoff(url, {
-    headers: { authorization: `Bearer ${ENV.forgeApiKey}` },
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(
-      `List LLM models failed: ${response.status} ${response.statusText} – ${errorText}`
-    );
-  }
-
-  return (await response.json()) as ModelsResponse;
+  return {
+    object: "list",
+    data: [
+      {
+        id: DEFAULT_MODEL,
+        object: "model",
+        created: 0,
+        owned_by: "openai",
+      },
+    ],
+  };
 }
