@@ -500,15 +500,7 @@ export async function generateFullPageImage(
     ? "The user's custom creative direction is primary and overrides dropdown-derived theme, topic, palette, decorative style, and visual treatment. It must not remove or rewrite required page content."
     : "Use the supplied generator-specific creative direction as the primary visual theme.";
 
-  if (params.pageType.toLowerCase().includes("cover")) {
-    return generateLegacyFullPageImage(
-      params,
-      exactTextManifest,
-      creativeDirection,
-      customDirectionRule
-    );
-  }
-
+  // ALL pages use hybrid rendering (including covers) — Flux cannot render text reliably
   try {
     const systemPrompt = `You are an elite educational publishing art director.
 Design a complete activity page layout for an educational product.
