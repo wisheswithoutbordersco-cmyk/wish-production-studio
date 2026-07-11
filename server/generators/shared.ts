@@ -321,13 +321,16 @@ function buildTextOverlaySvg(
   width: number,
   height: number
 ): Buffer {
-  const scaleFactor = height / 1536;
+  // Scale font sizes relative to page height. For a typical 1365px image,
+  // a fontSize of 28pt should render as ~25px which is readable.
+  // Use height/50 as the base unit so fontSize 28 = 28 * (height/50) / 28 = height/50 pixels per point
+  const pxPerPt = height / 55; // ~25px per point at 1365px height
   const renderedElements = elements.map(element => {
     const scaledFontSize = Math.max(
-      8,
-      Math.round(clamp(element.fontSize, 6, 96) * scaleFactor)
+      14,
+      Math.round(clamp(element.fontSize, 10, 48) * pxPerPt / 14)
     );
-    const padding = Math.max(4, Math.round(8 * scaleFactor));
+    const padding = Math.max(8, Math.round(12 * (height / 1365)));
     const lineHeight = Math.max(
       scaledFontSize + 2,
       Math.round(scaledFontSize * 1.25)
@@ -394,7 +397,7 @@ function buildTextOverlaySvg(
       .join("");
 
     return `<g>
-      <rect x="${panelX.toFixed(2)}" y="${panelY.toFixed(2)}" width="${panelWidth.toFixed(2)}" height="${panelHeight.toFixed(2)}" rx="${Math.max(4, Math.round(6 * scaleFactor))}" fill="#ffffff" fill-opacity="0.85"/>
+      <rect x="${panelX.toFixed(2)}" y="${panelY.toFixed(2)}" width="${panelWidth.toFixed(2)}" height="${panelHeight.toFixed(2)}" rx="${Math.max(4, Math.round(6 * (height / 1365)))}" fill="#ffffff" fill-opacity="0.85"/>
       <text x="${textX.toFixed(2)}" y="${textY.toFixed(2)}" font-family="Arial, Helvetica, sans-serif" font-size="${scaledFontSize}" font-weight="${element.fontWeight}" fill="${normalizeSvgColor(element.color)}" text-anchor="${anchor}" xml:space="preserve">${tspans}</text>
     </g>`;
   });
@@ -503,33 +506,39 @@ export async function generateFullPageImage(
   // ALL pages use hybrid rendering — NEVER fall back to Flux text rendering
   const MAX_LAYOUT_RETRIES = 3;
   const systemPrompt = `You are an elite educational publishing art director.
-Design a complete activity page layout for an educational product.
+Your job is to split a page into TWO parts: a DECORATIVE BACKGROUND image and a PROGRAMMATIC TEXT OVERLAY.
 
 You must return JSON with exactly this shape:
 {
-  "fluxPrompt": "A detailed prompt for FLUX to generate ONLY the illustration/background/decorative elements. The prompt MUST NOT request any text, letters, numbers, words, or typography. Describe only: background colors/gradients, decorative borders, themed illustrations, mascots, activity area outlines (boxes, lines, grids), and visual layout zones.",
+  "fluxPrompt": "A short prompt describing ONLY a decorative themed background/border. Example: 'A colorful jungle-themed decorative border frame with cartoon dinosaurs, tropical leaves, and flowers around the edges. The center is a large clean white area. No text, no letters, no numbers, no words anywhere.'",
   "textOverlay": [
-    {"text": "Page Title", "x": 50, "y": 5, "fontSize": 28, "fontWeight": "bold", "color": "#222222", "align": "center", "maxWidth": 90},
-    {"text": "Instructions here", "x": 5, "y": 12, "fontSize": 14, "fontWeight": "normal", "color": "#333333", "align": "left", "maxWidth": 90}
+    {"text": "Page Title", "x": 50, "y": 8, "fontSize": 32, "fontWeight": "bold", "color": "#222222", "align": "center", "maxWidth": 90},
+    {"text": "Instructions here", "x": 50, "y": 15, "fontSize": 16, "fontWeight": "normal", "color": "#333333", "align": "center", "maxWidth": 85}
   ]
 }
 
 CRITICAL RULES FOR fluxPrompt:
-- NEVER include any text, letters, numbers, words, or typography in the image
-- Describe blank zones/panels where text will be placed programmatically
-- Use phrases like "clean white panel area at top for title" or "empty lined area for writing"
+- The image is ONLY a decorative border/frame/background — think of it like themed stationery or a picture frame
+- The CENTER of the image MUST be a large clean white or light-colored empty area (at least 70% of the page)
+- Describe ONLY: border decorations, corner illustrations, themed characters peeking from edges, background patterns/colors
+- NEVER describe: worksheets, boxes, lines, grids, numbered areas, answer spaces, panels, cards, or any page structure
+- NEVER include any text, letters, numbers, words, writing, or typography
+- NEVER describe anything that looks like a form, document, or worksheet layout
+- The result should look like decorative stationery paper — beautiful borders with a blank center
 - End the prompt with: "${NO_TEXT_SUFFIX}"
 
 CRITICAL RULES FOR textOverlay:
 - x and y are PERCENTAGES (0-100) of the page dimensions
 - x=50 means horizontally centered, x=5 means near left edge
 - y=5 means near top, y=95 means near bottom
-- fontSize is in points (typical range: 10-36)
+- fontSize is in points (typical range: 14-36 for readability)
+- Use LARGE font sizes: titles should be 28-36, questions should be 18-22, instructions 16-18
 - Include ALL text that should appear on the page: title, instructions, questions, answer blanks, page number, branding
 - Preserve every mandatory text string EXACTLY as given below, without rewriting, correcting, combining, or omitting any of them
 - Use "___________________________" for answer lines
-- maxWidth is a percentage (use 90 by default) to prevent text overflow
+- maxWidth is a percentage (use 85 by default) to prevent text overflow
 - Use hexadecimal colors only, such as #222222
+- Space items evenly down the page — don't cluster everything at the top
 - You MUST include EVERY SINGLE item from the MANDATORY EXACT TEXT MANIFEST in your textOverlay array`;
 
   const userPrompt = `Design the illustration and programmatic text layout for page ${params.pageNumber} of ${params.totalPages} of a ${params.generatorType}.
@@ -558,7 +567,7 @@ ${(params.functionalRequirements || []).map((item, index) => `${index + 1}. ${it
 MANDATORY EXACT TEXT MANIFEST (you MUST include ALL of these in textOverlay):
 ${exactTextManifest}
 
-Return the JSON layout only. Put every mandatory text string in textOverlay and keep fluxPrompt strictly illustration-only. Design a flat, edge-to-edge, print-ready portrait page with safe margins, readable blank content zones, complete functional activity areas, and no mockup, desk, hands, photographed paper, or surrounding scene.`;
+Return the JSON layout only. Put every mandatory text string in textOverlay and keep fluxPrompt as ONLY a decorative border/background description (like themed stationery paper with a large blank white center). ALL page structure, questions, instructions, and content goes in textOverlay ONLY. No mockup, desk, hands, photographed paper, or surrounding scene.`;
 
   let lastError: Error | null = null;
   for (let attempt = 1; attempt <= MAX_LAYOUT_RETRIES; attempt++) {
