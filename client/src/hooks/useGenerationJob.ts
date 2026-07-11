@@ -11,6 +11,20 @@ export interface PageResult {
   error?: string;
 }
 
+export interface VariantJobResult {
+  variant: string;
+  jobId: string;
+  status: "pending" | "generating" | "complete" | "partial" | "error";
+  pdfUrl: string | null;
+  filename: string | null;
+}
+
+export interface VariantPdfResult {
+  variant: string;
+  pdfUrl: string;
+  filename: string | null;
+}
+
 export interface JobState {
   id: string;
   status: "pending" | "generating" | "complete" | "partial" | "error";
@@ -22,7 +36,8 @@ export interface JobState {
   filename: string;
   statusMessage: string;
   errorMessage: string | null;
-  variantJobs?: Array<{ variant: string; jobId: string; status: string }>;
+  variantJobs?: VariantJobResult[];
+  variantPdfUrls?: VariantPdfResult[];
 }
 
 interface UseGenerationJobReturn {

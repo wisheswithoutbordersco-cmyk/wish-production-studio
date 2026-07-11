@@ -165,7 +165,7 @@ generationRouter.post("/api/generate/therapeutic-activity", async (req: Request,
 
 generationRouter.post("/api/generate/batch-variant", async (req: Request, res: Response) => {
   try {
-    const jobId = createBatchVariantJob(req.body);
+    const jobId = await createBatchVariantJob(req.body);
     res.json({ jobId, type: "batch" });
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : "Failed to create job" });
@@ -207,6 +207,13 @@ generationRouter.get("/api/generate/job/:id", async (req: Request, res: Response
       statusMessage: batchJob.statusMessage,
       errorMessage: batchJob.errorMessage,
       variantJobs: batchJob.variantJobs,
+      variantPdfUrls: batchJob.variantJobs
+        .filter(variantJob => Boolean(variantJob.pdfUrl))
+        .map(variantJob => ({
+          variant: variantJob.variant,
+          pdfUrl: variantJob.pdfUrl as string,
+          filename: variantJob.filename,
+        })),
     });
     return;
   }
