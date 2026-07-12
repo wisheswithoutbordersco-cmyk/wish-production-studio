@@ -1,5 +1,4 @@
 import sharp from "sharp";
-import { ENV } from "../_core/env";
 import { invokeLLM } from "../_core/llm";
 import {
   addPageResult,
@@ -10,24 +9,31 @@ import {
   type PageResult,
 } from "../jobs";
 import { storagePut } from "../storage";
-import { finalizePdf } from "./shared";
+import { finalizePdf, generatePageImage } from "./shared";
 
 const PAGES_PER_CHUNK = 1;
 const PAGE_WIDTH = 2550;
 const PAGE_HEIGHT = 3300;
 const MAX_PAGE_COUNT = 30;
-const IMAGE_GENERATION_ATTEMPTS = 3;
 
-const COLORING_NEGATIVE_PROMPT =
+const NEGATIVE_PROMPT =
   "no text, no words, no letters, no numbers, no writing, no captions, no labels, no watermark, no signature, no blur, no distortion, no artifacts";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 type PageType = "coloring-page" | "text-heavy";
 
-interface PageComposition {
+interface ContentItem {
+  type: "question" | "instruction" | "activity" | "fill-blank" | "matching" | "bingo-header" | "list-item";
+  text: string;
+}
+
+interface PageContent {
   pageType: PageType;
-  imagePrompt: string;
+  title: string;
+  subtitle: string;
+  items: ContentItem[];
+  borderPrompt: string;
 }
 
 export interface QuickCreateOptions {
@@ -43,12 +49,6 @@ interface NormalizedOptions {
   gradeLevel: string;
 }
 
-interface ImageApiResponse {
-  data?: Array<{
-    b64_json?: string;
-  }>;
-}
-
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function normalizeOptions(options: QuickCreateOptions): NormalizedOptions {
@@ -62,11 +62,7 @@ function normalizeOptions(options: QuickCreateOptions): NormalizedOptions {
   }
   if (!gradeLevel) throw new Error("Grade level is required");
 
-  return {
-    prompt: prompt.slice(0, 2000),
-    pageCount,
-    gradeLevel: gradeLevel.slice(0, 100),
-  };
+  return { prompt: prompt.slice(0, 2000), pageCount, gradeLevel: gradeLevel.slice(0, 100) };
 }
 
 function extractLlmText(result: Awaited<ReturnType<typeof invokeLLM>>): string {
@@ -79,62 +75,58 @@ function extractLlmText(result: Awaited<ReturnType<typeof invokeLLM>>): string {
     .trim();
 }
 
+function escapeXml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
 function isColoringRequest(prompt: string): boolean {
   return /\b(?:coloring|colouring|line art|colour-in|color-in|coloring book|coloring page)\b/i.test(prompt);
 }
 
-function wait(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
+// ─── Content Generation (LLM) ───────────────────────────────────────────────
 
-// ─── Composition Prompt Generation (LLM) ─────────────────────────────────────
-
-async function generatePageComposition(
+async function generatePageContent(
   options: NormalizedOptions,
   pageIndex: number,
   totalPages: number
-): Promise<PageComposition> {
+): Promise<PageContent> {
+  const lowerPrompt = options.prompt.toLowerCase();
+
+  // For coloring pages, skip content generation entirely
   if (isColoringRequest(options.prompt)) {
     return {
       pageType: "coloring-page",
-      imagePrompt: `Simple black-and-white line art coloring page illustration based on: ${options.prompt}. Thick clean outlines, no shading, no color, no background clutter. Kid-friendly for ${options.gradeLevel}. Centered on the page, high contrast, printable, vector-like. Page ${pageIndex + 1} of ${totalPages} with a unique scene.`,
+      title: "",
+      subtitle: "",
+      items: [],
+      borderPrompt: `Simple black-and-white line art coloring page illustration based on: ${options.prompt}. Thick clean outlines, no shading, no color, no background clutter. Kid-friendly for ${options.gradeLevel}. Centered on the page, high contrast, printable, vector-like. Page ${pageIndex + 1} of ${totalPages} with a unique scene.`,
     };
   }
 
-  const systemPrompt = `You are an expert graphic designer creating prompts for AI image generation of professional printable educational products.
-
-Given a user's request, create a detailed image generation prompt that describes a COMPLETE full-page design including:
-- Page title and subtitle with the exact text to render
-- All content text, including questions, answers, instructions, activities, labels, and answer blanks, with exact wording
-- Visual theme, including a coordinated color palette, illustration style, and decorative elements
-- Layout structure describing exactly how every section and content item is arranged on the page
-- Decorative illustrations and icons relevant to the subject and audience
-- Footer branding with the exact text "WishesWithoutBordersCo"
+  // For text-heavy pages, use LLM to generate structured content + border prompt
+  const systemPrompt = `You are a professional educational content creator for printable worksheets and activity pages.
+Given a user's request, generate structured page content AND a decorative border description.
 
 RULES:
-- The prompt must describe ONE complete, flat, full-page image at 8.5x11 inches in portrait orientation
-- The image must fill the entire canvas edge-to-edge and must not look like a photographed sheet, mockup, framed object, or page placed on a background
-- ALL text must be included verbatim in the prompt, spelled correctly, factually accurate, and age-appropriate for the stated grade level
-- Include 5-8 substantive content items per page, such as questions, activities, prompts, facts, matching items, or game elements
-- Describe specific colors, font styles, text hierarchy, spacing, panels, shapes, icons, and illustrations
-- Prioritize legibility: strong contrast, generous spacing, clean grouping, and no overlapping text or decorative elements
-- The finished design should look like a professional Canva template: colorful, layered, polished, balanced, and print-ready, with integrated typography and themed illustrations
-- Make this page visually and substantively unique when the product contains multiple pages
-- Always include "WishesWithoutBordersCo" as small, legible footer branding text
-- Do not mention post-production, overlays, editable layers, or adding text later; the generated image itself must be the complete finished page
+- Generate real, accurate, educational content appropriate for the grade level
+- Create 5-8 items per page (questions, activities, fill-in-the-blank, etc.)
+- Each item should be a complete, properly spelled sentence or instruction
+- The borderPrompt describes ONLY decorative art for the page border/frame - NO TEXT in the border
+- The border should have an empty white center (the text goes there programmatically)
+- Make each page unique if multiple pages are requested
 
-Return JSON only with this shape: {"imagePrompt":"the complete image-generation prompt"}.`;
+Return JSON only.`;
 
-  const userPrompt = `USER REQUEST:
-${options.prompt}
+  const userPrompt = `User request: ${options.prompt}
+Grade level: ${options.gradeLevel}
+Page ${pageIndex + 1} of ${totalPages}
 
-GRADE LEVEL:
-${options.gradeLevel}
-
-PAGE:
-${pageIndex + 1} of ${totalPages}
-
-Create the complete image composition prompt for this page. Ensure its content and visual treatment are unique to this page while remaining consistent with the requested product.`;
+Generate the structured content for this page.`;
 
   try {
     const result = await invokeLLM({
@@ -145,133 +137,234 @@ Create the complete image composition prompt for this page. Ensure its content a
       response_format: {
         type: "json_schema",
         json_schema: {
-          name: "page_composition_prompt",
+          name: "page_content",
           strict: true,
           schema: {
             type: "object",
             properties: {
-              imagePrompt: { type: "string" },
+              title: { type: "string" },
+              subtitle: { type: "string" },
+              items: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: {
+                    type: {
+                      type: "string",
+                      enum: ["question", "instruction", "activity", "fill-blank", "matching", "bingo-header", "list-item"],
+                    },
+                    text: { type: "string" },
+                  },
+                  required: ["type", "text"],
+                  additionalProperties: false,
+                },
+              },
+              borderDescription: { type: "string" },
             },
-            required: ["imagePrompt"],
+            required: ["title", "subtitle", "items", "borderDescription"],
             additionalProperties: false,
           },
         },
       },
     });
 
-    const parsed = JSON.parse(extractLlmText(result)) as { imagePrompt?: unknown };
-    const imagePrompt =
-      typeof parsed.imagePrompt === "string" ? parsed.imagePrompt.trim() : "";
+    const parsed = JSON.parse(extractLlmText(result));
+    const title = String(parsed.title || "").trim();
+    const subtitle = String(parsed.subtitle || "").trim();
+    const items: ContentItem[] = Array.isArray(parsed.items)
+      ? parsed.items.map((item: any) => ({
+          type: String(item.type || "question"),
+          text: String(item.text || "").trim(),
+        })).filter((item: ContentItem) => item.text.length > 0)
+      : [];
+    const borderDesc = String(parsed.borderDescription || "colorful decorative border").trim();
 
-    if (!imagePrompt) {
-      throw new Error("LLM returned an empty image composition prompt");
+    if (!title || items.length === 0) {
+      throw new Error("LLM returned empty content");
     }
 
     return {
       pageType: "text-heavy",
-      imagePrompt,
+      title,
+      subtitle,
+      items,
+      borderPrompt: `Beautiful decorative border frame illustration: ${borderDesc}. The border is ornate and colorful around all four edges. The CENTER of the image is completely empty white space - only decorative art around the edges forming a frame. Portrait orientation, 8.5x11 inch proportions. Professional printable quality.`,
     };
   } catch (error) {
-    console.warn(
-      `Composition prompt generation failed for page ${pageIndex + 1}, using fallback:`,
-      error
-    );
-    return buildFallbackComposition(options, pageIndex, totalPages);
+    console.warn(`Content generation failed for page ${pageIndex + 1}, using fallback:`, error);
+    return buildFallbackContent(options, pageIndex, totalPages);
   }
 }
 
-function buildFallbackComposition(
+function buildFallbackContent(
   options: NormalizedOptions,
   pageIndex: number,
   totalPages: number
-): PageComposition {
+): PageContent {
   return {
     pageType: "text-heavy",
-    imagePrompt: `Create ONE complete, flat, full-page professional printable based on this request: "${options.prompt}". Audience: ${options.gradeLevel}. This is page ${pageIndex + 1} of ${totalPages}. Use an 8.5x11-inch portrait composition filling the entire canvas edge-to-edge, never a photographed paper, mockup, frame, or page on a background. Include a clear title and subtitle with correctly spelled exact wording, concise instructions, and 5-8 substantive age-appropriate content items with all questions, activities, labels, answer choices, and answer blanks rendered directly in the image. Use a cohesive colorful palette, polished font hierarchy, high-contrast readable typography, layered panels and shapes, balanced spacing, subject-relevant icons, and charming themed illustrations. Keep all text unobstructed and prevent decorative elements from overlapping the content. Make the page look like a premium professional Canva template and a finished print-ready educational product. Add the exact small footer branding text "WishesWithoutBordersCo".`,
+    title: options.prompt.slice(0, 60),
+    subtitle: `${options.gradeLevel} • Page ${pageIndex + 1} of ${totalPages}`,
+    items: [
+      { type: "instruction", text: "Complete the activities below." },
+      { type: "question", text: "Question 1: ___________________________" },
+      { type: "question", text: "Question 2: ___________________________" },
+      { type: "question", text: "Question 3: ___________________________" },
+      { type: "question", text: "Question 4: ___________________________" },
+      { type: "question", text: "Question 5: ___________________________" },
+    ],
+    borderPrompt: `Beautiful colorful decorative border frame with educational theme elements. The CENTER is completely empty white space. Only ornate decorative art around all four edges. Portrait 8.5x11 proportions. Professional printable quality.`,
   };
 }
 
-// ─── Image Generation ─────────────────────────────────────────────────────────
+// ─── SVG Text Overlay Builder ────────────────────────────────────────────────
 
-async function generateCompositionImage(prompt: string): Promise<Buffer> {
-  let lastError: unknown;
+function buildContentSvg(content: PageContent): Buffer {
+  const lines: string[] = [];
+  lines.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${PAGE_WIDTH}" height="${PAGE_HEIGHT}">`);
 
-  for (let attempt = 1; attempt <= IMAGE_GENERATION_ATTEMPTS; attempt++) {
-    try {
-      const response = await fetch("https://openrouter.ai/api/v1/images", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${ENV.openRouterApiKey}`,
-        },
-        body: JSON.stringify({
-          model: "openai/gpt-5-image-mini",
-          prompt,
-          aspect_ratio: "3:4",
-          quality: "high",
-        }),
-      });
+  // White content panel (inset from edges to show border)
+  const margin = 200;
+  const panelW = PAGE_WIDTH - margin * 2;
+  const panelH = PAGE_HEIGHT - margin * 2;
+  lines.push(`<rect x="${margin}" y="${margin}" width="${panelW}" height="${panelH}" rx="20" fill="white" fill-opacity="0.93"/>`);
 
-      if (!response.ok) {
-        const detail = await response.text().catch(() => "");
-        throw new Error(`Image generation failed (${response.status}): ${detail}`);
-      }
+  const leftX = margin + 80;
+  const centerX = PAGE_WIDTH / 2;
+  const maxTextWidth = panelW - 160;
+  let y = margin + 140;
 
-      const result = (await response.json()) as ImageApiResponse;
-      const b64 = result.data?.[0]?.b64_json;
-      if (!b64) throw new Error("No image data in response");
-
-      return Buffer.from(b64, "base64");
-    } catch (error) {
-      lastError = error;
-      if (attempt === IMAGE_GENERATION_ATTEMPTS) break;
-
-      const message = error instanceof Error ? error.message : String(error);
-      console.warn(
-        `Composition image attempt ${attempt} of ${IMAGE_GENERATION_ATTEMPTS} failed: ${message}`
-      );
-      await wait(1000 * 2 ** (attempt - 1));
-    }
+  // Title
+  if (content.title) {
+    lines.push(`<text x="${centerX}" y="${y}" font-family="DejaVu Sans, Arial, sans-serif" font-size="100" font-weight="bold" fill="#1a1a1a" text-anchor="middle">${escapeXml(content.title)}</text>`);
+    y += 80;
   }
 
-  throw lastError instanceof Error
-    ? lastError
-    : new Error("Image generation failed after 3 attempts");
+  // Subtitle
+  if (content.subtitle) {
+    lines.push(`<text x="${centerX}" y="${y}" font-family="DejaVu Sans, Arial, sans-serif" font-size="50" fill="#555" text-anchor="middle">${escapeXml(content.subtitle)}</text>`);
+    y += 60;
+  }
+
+  // Divider line
+  y += 20;
+  lines.push(`<line x1="${leftX}" y1="${y}" x2="${PAGE_WIDTH - margin - 80}" y2="${y}" stroke="#ddd" stroke-width="2"/>`);
+  y += 60;
+
+  // Content items
+  const itemSpacing = Math.min(200, Math.floor((PAGE_HEIGHT - margin - 300 - y) / Math.max(content.items.length, 1)));
+
+  for (const item of content.items) {
+    if (y > PAGE_HEIGHT - margin - 200) break; // Don't overflow
+
+    const fontSize = item.type === "instruction" ? 42 : 46;
+    const fill = item.type === "instruction" ? "#666" : "#222";
+    const weight = item.type === "instruction" ? "normal" : "normal";
+
+    // Word wrap long text
+    const words = item.text.split(" ");
+    let currentLine = "";
+    const wrappedLines: string[] = [];
+    const charsPerLine = Math.floor(maxTextWidth / (fontSize * 0.55));
+
+    for (const word of words) {
+      if ((currentLine + " " + word).trim().length > charsPerLine) {
+        if (currentLine) wrappedLines.push(currentLine.trim());
+        currentLine = word;
+      } else {
+        currentLine = currentLine ? currentLine + " " + word : word;
+      }
+    }
+    if (currentLine) wrappedLines.push(currentLine.trim());
+
+    for (const line of wrappedLines) {
+      if (y > PAGE_HEIGHT - margin - 200) break;
+      lines.push(`<text x="${leftX}" y="${y}" font-family="DejaVu Sans, Arial, sans-serif" font-size="${fontSize}" font-weight="${weight}" fill="${fill}">${escapeXml(line)}</text>`);
+      y += fontSize + 12;
+    }
+
+    // Add answer line for questions
+    if (item.type === "question" || item.type === "fill-blank") {
+      y += 10;
+      lines.push(`<line x1="${leftX + 40}" y1="${y}" x2="${PAGE_WIDTH - margin - 120}" y2="${y}" stroke="#999" stroke-width="1.5" stroke-dasharray="6,4"/>`);
+      y += 20;
+    }
+
+    y += Math.max(itemSpacing - (wrappedLines.length * (fontSize + 12)) - 30, 20);
+  }
+
+  // Branding at bottom
+  lines.push(`<text x="${centerX}" y="${PAGE_HEIGHT - margin + 50}" font-family="DejaVu Sans, Arial, sans-serif" font-size="30" fill="#bbb" text-anchor="middle">WishesWithoutBordersCo</text>`);
+
+  lines.push("</svg>");
+  return Buffer.from(lines.join("\n"));
 }
 
-async function generateColoringPage(imagePrompt: string): Promise<Buffer> {
-  // Use GPT-5 Image Mini for coloring pages too — cleaner line art, better compositions
-  const coloringPrompt = `${imagePrompt}. Style: pure black-and-white line art coloring page. Thick clean outlines only, no shading, no gray tones, no color fills, no background textures. High contrast black lines on pure white background. Vector-like clean edges. Professional coloring book quality suitable for printing.`;
+// ─── Image Generation & Compositing ─────────────────────────────────────────
 
-  const rawBuffer = await generateCompositionImage(coloringPrompt);
+async function generateBorderImage(borderPrompt: string): Promise<Buffer> {
+  const fullPrompt = `${borderPrompt}\n\nNegative prompt: ${NEGATIVE_PROMPT}`;
+  const { buffer } = await generatePageImage(fullPrompt, {
+    aspectRatio: "3:4",
+    raw: true,
+  });
+  // Resize to page dimensions
+  return sharp(buffer)
+    .resize(PAGE_WIDTH, PAGE_HEIGHT, { fit: "fill", kernel: sharp.kernel.lanczos3 })
+    .png()
+    .toBuffer();
+}
 
-  // Post-process to ensure clean B&W output
-  const cleaned = await sharp(rawBuffer)
+async function generateColoringPage(prompt: string): Promise<Buffer> {
+  const fullPrompt = `${prompt}\n\nNegative prompt: ${NEGATIVE_PROMPT}`;
+  const { buffer } = await generatePageImage(fullPrompt, {
+    aspectRatio: "3:4",
+    raw: true,
+  });
+  // B&W post-processing pipeline from reference docs
+  const cleaned = await sharp(buffer)
+    .rotate()
     .flatten({ background: "#ffffff" })
     .grayscale()
     .threshold(128)
     .sharpen()
+    .median(2)
     .png()
     .toBuffer();
 
-  // Resize to print dimensions
+  // Resize and center on page
+  const metadata = await sharp(cleaned).metadata();
+  if (!metadata.width || !metadata.height) throw new Error("Image dimensions unavailable");
+
+  const scale = Math.min(PAGE_WIDTH / metadata.width, PAGE_HEIGHT / metadata.height);
+  const width = Math.round(metadata.width * scale);
+  const height = Math.round(metadata.height * scale);
+  const left = Math.floor((PAGE_WIDTH - width) / 2);
+  const top = Math.floor((PAGE_HEIGHT - height) / 2);
+
   return sharp(cleaned)
-    .resize(PAGE_WIDTH, PAGE_HEIGHT, {
-      fit: "fill",
-      kernel: sharp.kernel.lanczos3,
+    .resize(width, height, { fit: "fill", kernel: sharp.kernel.nearest })
+    .extend({
+      top,
+      bottom: PAGE_HEIGHT - height - top,
+      left,
+      right: PAGE_WIDTH - width - left,
+      background: { r: 255, g: 255, b: 255, alpha: 1 },
     })
     .png({ compressionLevel: 9 })
     .toBuffer();
 }
 
-async function generateTextHeavyPage(imagePrompt: string): Promise<Buffer> {
-  const rawBuffer = await generateCompositionImage(imagePrompt);
+async function generateTextHeavyPage(content: PageContent): Promise<Buffer> {
+  // Step 1: Generate decorative border from Flux
+  const borderBuffer = await generateBorderImage(content.borderPrompt);
 
-  return sharp(rawBuffer)
-    .resize(PAGE_WIDTH, PAGE_HEIGHT, {
-      fit: "fill",
-      kernel: sharp.kernel.lanczos3,
-    })
+  // Step 2: Build SVG text overlay from structured content
+  const svgBuffer = buildContentSvg(content);
+
+  // Step 3: Composite text over border
+  return sharp(borderBuffer)
+    .composite([{ input: svgBuffer, top: 0, left: 0 }])
     .png({ compressionLevel: 9 })
     .toBuffer();
 }
@@ -285,17 +378,18 @@ async function generateQuickCreatePage(
   const options = job.options as unknown as NormalizedOptions;
   const pageNumber = pageIndex + 1;
 
-  const composition = await generatePageComposition(
-    options,
-    pageIndex,
-    job.totalPages
-  );
+  // Step 1: Generate structured content via LLM
+  const content = await generatePageContent(options, pageIndex, job.totalPages);
 
-  const finalBuffer =
-    composition.pageType === "coloring-page"
-      ? await generateColoringPage(composition.imagePrompt)
-      : await generateTextHeavyPage(composition.imagePrompt);
+  // Step 2: Generate the image based on page type
+  let finalBuffer: Buffer;
+  if (content.pageType === "coloring-page") {
+    finalBuffer = await generateColoringPage(content.borderPrompt);
+  } else {
+    finalBuffer = await generateTextHeavyPage(content);
+  }
 
+  // Step 3: Upload to storage
   const { url: imageUrl } = await storagePut(
     `pages/quick-create/${job.id}/page-${String(pageNumber).padStart(3, "0")}.png`,
     finalBuffer,
@@ -306,7 +400,7 @@ async function generateQuickCreatePage(
     pageNumber,
     imageUrl,
     status: "success",
-    metadata: { pageType: composition.pageType },
+    metadata: { pageType: content.pageType },
   };
 }
 
