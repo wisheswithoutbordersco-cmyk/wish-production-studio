@@ -70,7 +70,9 @@ async function generateWorksheetContent(opts: WorksheetOptions, pageVariant: num
   const activityType = ACTIVITY_TYPES[pageVariant % ACTIVITY_TYPES.length];
 
   const systemPrompt = `You are an expert elementary school teacher creating engaging, age-appropriate educational worksheets.
-Your worksheets are clear, encouraging, and perfectly matched to the student's level.${customPromptInstruction(opts.customPrompt)}`;
+Your worksheets are clear, encouraging, and perfectly matched to the student's level.${customPromptInstruction(opts.customPrompt)}
+Every math problem must be unique — never repeat the same problem on the same page or across pages.
+Verify all math answers are correct before rendering. For matching exercises, pair each problem with its correct numerical answer.`;
 
   const userPrompt = `Create worksheet content for:
 - Subject: ${opts.subject}
