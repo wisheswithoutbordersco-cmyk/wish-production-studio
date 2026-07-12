@@ -17,6 +17,28 @@ export interface WorksheetOptions {
   quantity: number;
 }
 
+type WorksheetRuntimeOptions = WorksheetOptions & {
+  /** Internal per-job state; options are held in memory for the lifetime of a job. */
+  __usedMathProblems?: Set<string>;
+};
+
+type WorksheetContent = {
+  title: string;
+  instructions: string;
+  items: string[];
+  activityType: string;
+};
+
+type MathProblem = {
+  key: string;
+  display: string;
+  answer: number;
+};
+
+const CONTENT_GENERATION_ATTEMPTS = 3; // Initial attempt plus two corrective retries.
+const NUMBER_PATTERN = "-?\\d+(?:\\.\\d+)?";
+const OPERATOR_PATTERN = "[+\\-−×xX*÷/]";
+
 const SKILL_MAP: Record<string, string[]> = {
   "Math": ["Addition", "Subtraction", "Multiplication", "Division", "Fractions", "Telling Time", "Money", "Patterns", "Geometry", "Word Problems"],
   "Reading": ["Phonics", "Sight Words", "Reading Comprehension", "Vocabulary", "Sequencing", "Main Idea", "Context Clues"],
@@ -63,18 +85,182 @@ function scrubPlaceholders(input?: string): string {
 }
 
 /**
+ * Normalize operators so equivalent notation is validated consistently.
+ */
+function normalizeOperator(operator: string): string {
+  if (["×", "x", "X", "*"].includes(operator)) return "*";
+  if (["÷", "/"].includes(operator)) return "/";
+  if (operator === "−") return "-";
+  return operator;
+}
+
+function normalizeNumber(value: number): string {
+  return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(8)));
+}
+
+function calculateAnswer(left: number, operator: string, right: number): number | null {
+  if (operator === "+") return left + right;
+  if (operator === "-") return left - right;
+  if (operator === "*") return left * right;
+  if (operator === "/") return right === 0 ? null : left / right;
+  return null;
+}
+
+/**
+ * Addition and multiplication reversals are treated as the same math fact. This
+ * is stricter than textual equality and prevents pages such as 4 + 5 / 5 + 4.
+ */
+function createProblemKey(left: number, operator: string, right: number): string {
+  const operands = operator === "+" || operator === "*"
+    ? [left, right].sort((a, b) => a - b)
+    : [left, right];
+  return `${normalizeNumber(operands[0])}${operator}${normalizeNumber(operands[1])}`;
+}
+
+function extractMathProblems(item: string): MathProblem[] {
+  const equationRegex = new RegExp(`(${NUMBER_PATTERN})\\s*(${OPERATOR_PATTERN})\\s*(${NUMBER_PATTERN})`, "g");
+  const problems: MathProblem[] = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = equationRegex.exec(item)) !== null) {
+    const left = Number(match[1]);
+    const operator = normalizeOperator(match[2]);
+    const right = Number(match[3]);
+    const answer = calculateAnswer(left, operator, right);
+    if (answer === null || !Number.isFinite(answer)) continue;
+
+    problems.push({
+      key: createProblemKey(left, operator, right),
+      display: `${normalizeNumber(left)} ${operator} ${normalizeNumber(right)}`,
+      answer,
+    });
+  }
+
+  return problems;
+}
+
+function extractChoiceValues(item: string): number[] {
+  const values: number[] = [];
+  const labeledChoiceRegex = new RegExp(`(?:^|\\s)[a-dA-D][).:]\\s*(${NUMBER_PATTERN})(?=\\s|$|[,;])`, "g");
+  let match: RegExpExecArray | null;
+  while ((match = labeledChoiceRegex.exec(item)) !== null) {
+    values.push(Number(match[1]));
+  }
+
+  const choicesSection = item.match(/(?:answer\s+choices?|choices?)\s*:\s*(.+)$/i)?.[1];
+  if (choicesSection) {
+    const numberRegex = new RegExp(NUMBER_PATTERN, "g");
+    for (const value of choicesSection.match(numberRegex) || []) {
+      values.push(Number(value));
+    }
+  }
+
+  return Array.from(new Set(values.filter(Number.isFinite)));
+}
+
+function validateMathContent(
+  content: WorksheetContent,
+  usedProblems: Set<string>
+): { errors: string[]; problemKeys: string[] } {
+  const errors: string[] = [];
+  const currentPageProblems = new Set<string>();
+  const problemKeys: string[] = [];
+
+  content.items.forEach((item, itemIndex) => {
+    const problems = extractMathProblems(item);
+    if (problems.length === 0) {
+      errors.push(`Item ${itemIndex + 1} does not contain a parseable math equation.`);
+      return;
+    }
+
+    problems.forEach(problem => {
+      if (currentPageProblems.has(problem.key)) {
+        errors.push(`Item ${itemIndex + 1} repeats ${problem.display} on this page.`);
+      } else if (usedProblems.has(problem.key)) {
+        errors.push(`Item ${itemIndex + 1} repeats previously used problem ${problem.display}.`);
+      } else {
+        currentPageProblems.add(problem.key);
+        problemKeys.push(problem.key);
+      }
+
+      if (content.activityType === "matching" || content.activityType === "multiple-choice") {
+        const choices = extractChoiceValues(item);
+        const hasCorrectChoice = choices.some(choice => Math.abs(choice - problem.answer) < 1e-8);
+        if (!hasCorrectChoice) {
+          errors.push(
+            `Item ${itemIndex + 1} (${problem.display}) must include the correct answer ${normalizeNumber(problem.answer)} among its choices.`
+          );
+        }
+      }
+    });
+  });
+
+  return { errors, problemKeys };
+}
+
+function parseWorksheetContent(
+  rawContent: string,
+  opts: WorksheetOptions,
+  activityType: string
+): WorksheetContent {
+  const parsed = JSON.parse(rawContent) as Record<string, unknown>;
+  const items = Array.isArray(parsed.items)
+    ? parsed.items.filter((item): item is string => typeof item === "string").slice(0, 8)
+    : [];
+
+  if (items.length === 0) {
+    throw new Error("The response did not contain any worksheet items.");
+  }
+
+  return {
+    title: typeof parsed.title === "string" && parsed.title.trim()
+      ? parsed.title
+      : `${opts.specificSkill} Practice`,
+    instructions: typeof parsed.instructions === "string" && parsed.instructions.trim()
+      ? parsed.instructions
+      : `Complete each ${activityType} activity below.`,
+    items,
+    activityType,
+  };
+}
+
+/**
  * Generate age-appropriate worksheet content using GPT.
  */
-async function generateWorksheetContent(opts: WorksheetOptions, pageVariant: number): Promise<{ title: string; instructions: string; items: string[]; activityType: string }> {
+async function generateWorksheetContent(opts: WorksheetOptions, pageVariant: number): Promise<WorksheetContent> {
   const ageRange = gradeToAgeRange(opts.gradeLevel);
   const activityType = ACTIVITY_TYPES[pageVariant % ACTIVITY_TYPES.length];
+  const runtimeOptions = opts as WorksheetRuntimeOptions;
+  const usedProblems = runtimeOptions.__usedMathProblems ?? new Set<string>();
+  runtimeOptions.__usedMathProblems = usedProblems;
+  const isMathWorksheet = opts.subject.toLowerCase() === "math";
+  const previouslyUsedProblems = Array.from(usedProblems).sort();
 
   const systemPrompt = `You are an expert elementary school teacher creating engaging, age-appropriate educational worksheets.
 Your worksheets are clear, encouraging, and perfectly matched to the student's level.${customPromptInstruction(opts.customPrompt)}
-Every math problem must be unique — never repeat the same problem on the same page or across pages.
-Verify all math answers are correct before rendering. For matching exercises, pair each problem with its correct numerical answer.`;
 
-  const userPrompt = `Create worksheet content for:
+ABSOLUTE MATH ACCURACY AND UNIQUENESS RULES — THESE ARE NON-NEGOTIABLE:
+- NEVER repeat a math problem within a page or across pages. A problem is the same when it has the same operands and operator. For addition and multiplication, reversed operands also count as the same problem (for example, 4 + 5 and 5 + 4 are duplicates).
+- Before returning JSON, compare every equation against every other equation and against the previously used list. Replace every duplicate.
+- Calculate and DOUBLE-CHECK every arithmetic answer before outputting the JSON.
+- For every matching or multiple-choice item, the mathematically correct answer MUST appear among that item's provided choices. Never provide a question whose correct answer is absent.
+- Return only valid JSON matching the requested shape. Do not rely on the image model to correct content mistakes.`;
+
+  const formatGuidance = activityType === "matching"
+    ? '- matching: "Match: 4 + 5 → Choices: 7, 8, 9" format. Include at least three numeric choices in EVERY item, including the correct answer.'
+    : activityType === "multiple-choice"
+      ? '- multiple-choice: "Q: What is 4 + 5?  a) 7  b) 8  c) 9  d) 10" format. Include the correct answer in EVERY item.'
+      : `- ${activityType}: ${
+          activityType === "fill-in-the-blank"
+            ? "equations with ___________ for the missing answer"
+            : activityType === "short-answer"
+              ? "questions requiring brief written answers"
+              : activityType === "true-or-false"
+                ? 'statements followed by "True / False: ___"'
+                : '"Put in order: [items to sequence]"'
+        }`;
+
+  const baseUserPrompt = `Create worksheet content for:
 - Subject: ${opts.subject}
 - Skill: ${opts.specificSkill}
 - Grade Level: ${opts.gradeLevel} (${ageRange})
@@ -89,41 +275,69 @@ Return a JSON object:
 }
 
 For ${activityType} format:
-- fill-in-the-blank: sentences with ___________ for missing words
-- matching: "Match: [term] → ___________" format
-- multiple-choice: "Q: question?  a) option  b) option  c) option  d) option" format
-- short-answer: questions requiring brief written answers
-- true-or-false: statements followed by "True / False: ___"
-- ordering/sequencing: "Put in order: [items to sequence]"
+${formatGuidance}
+
+PREVIOUSLY USED MATH PROBLEMS — DO NOT USE ANY OF THESE:
+${previouslyUsedProblems.length > 0 ? previouslyUsedProblems.join(", ") : "None yet."}
 
 RULES:
 - All items must be age-appropriate for ${ageRange}
 - Each item must be self-contained (no references to images)
 - NEVER include placeholder text like "[Picture of...]"
-- Keep items concise — one line each`;
+- Keep items concise — one line each
+- For math worksheets, include exactly one parseable equation in every item`;
 
-  const content = await generateContent({
-    systemPrompt,
-    userPrompt,
-    responseFormat: { type: "json_object" },
-  });
+  let validationErrors: string[] = [];
+  let lastError: unknown;
 
-  try {
-    const parsed = JSON.parse(content);
-    return {
-      title: parsed.title || `${opts.specificSkill} Practice`,
-      instructions: parsed.instructions || `Complete each ${activityType} activity below.`,
-      items: Array.isArray(parsed.items) ? parsed.items.slice(0, 8) : [],
-      activityType,
-    };
-  } catch {
-    return {
-      title: `${opts.subject}: ${opts.specificSkill}`,
-      instructions: `Practice your ${opts.specificSkill} skills below:`,
-      items: Array.from({ length: 6 }, (_, i) => `${i + 1}. ___________________________________________`),
-      activityType,
-    };
+  for (let attempt = 1; attempt <= CONTENT_GENERATION_ATTEMPTS; attempt++) {
+    const correctionPrompt = attempt === 1
+      ? ""
+      : `\n\nCORRECTION REQUIRED — ATTEMPT ${attempt}:
+Your previous attempt had duplicates, missing correct choices, invalid arithmetic, or malformed JSON. Fix every issue and return a completely corrected JSON object.
+Validation failures from the previous attempt:
+${validationErrors.map(error => `- ${error}`).join("\n")}
+Do not repeat any rejected equation. Recalculate every answer before responding.`;
+
+    try {
+      const rawContent = await generateContent({
+        systemPrompt,
+        userPrompt: `${baseUserPrompt}${correctionPrompt}`,
+        responseFormat: { type: "json_object" },
+      });
+      const parsedContent = parseWorksheetContent(rawContent, opts, activityType);
+
+      if (isMathWorksheet) {
+        const validation = validateMathContent(parsedContent, usedProblems);
+        validationErrors = validation.errors;
+        if (validationErrors.length > 0) {
+          lastError = new Error(validationErrors.join(" "));
+          continue;
+        }
+        validation.problemKeys.forEach(problem => usedProblems.add(problem));
+      }
+
+      return parsedContent;
+    } catch (error) {
+      lastError = error;
+      validationErrors = [error instanceof Error ? error.message : "Invalid worksheet JSON response."];
+    }
   }
+
+  if (isMathWorksheet) {
+    throw new Error(
+      `Worksheet math validation failed after ${CONTENT_GENERATION_ATTEMPTS} attempts: ${
+        lastError instanceof Error ? lastError.message : "unknown validation error"
+      }`
+    );
+  }
+
+  return {
+    title: `${opts.subject}: ${opts.specificSkill}`,
+    instructions: `Practice your ${opts.specificSkill} skills below:`,
+    items: Array.from({ length: 6 }, (_, i) => `${i + 1}. ___________________________________________`),
+    activityType,
+  };
 }
 
 async function generateWorksheetPage(pageIndex: number, job: GenerationJob): Promise<PageResult> {
@@ -225,10 +439,14 @@ async function processWorksheetChunkInternal(job: GenerationJob): Promise<void> 
 
 export function createWorksheetJob(options: WorksheetOptions): string {
   const totalPages = options.quantity + 1; // +1 for cover
+  const runtimeOptions: WorksheetRuntimeOptions = {
+    ...options,
+    __usedMathProblems: new Set<string>(),
+  };
   const job = createJob(
     "worksheet",
     totalPages,
-    options,
+    runtimeOptions,
     `worksheet-${options.subject.toLowerCase()}-${options.specificSkill.toLowerCase().replace(/\s+/g, "-")}.pdf`
   );
   return job.id;
