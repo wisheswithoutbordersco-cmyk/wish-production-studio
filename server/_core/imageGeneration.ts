@@ -1,11 +1,11 @@
 /**
  * Image generation helper using fal.ai's FLUX Pro endpoint.
  *
- * Text-to-image page illustrations use the official fal.ai client and return
- * one 1024x1024 PNG. Existing source-image workflows retain their dedicated
- * image-input request path so enhancement tools keep their current behavior.
+ * Example usage:
+ *   const { url: imageUrl } = await generateImage({
+ *     prompt: "A serene landscape with mountains"
+ *   });
  */
-import { fal } from "@fal-ai/client";
 import { ENV } from "./env";
 
 export type GenerateImageOptions = {
@@ -22,9 +22,7 @@ export type GenerateImageResponse = {
   url?: string;
 };
 
-const FAL_TEXT_TO_IMAGE_MODEL = "fal-ai/flux-pro/v1.1";
-const FAL_SOURCE_IMAGE_ENDPOINT = "https://fal.run/fal-ai/flux-pro/v1.1-ultra";
-const IMAGE_SIZE = { width: 1024, height: 1024 } as const;
+const FAL_IMAGE_ENDPOINT = "https://fal.run/fal-ai/flux-pro/v1.1-ultra";
 const MAX_RETRIES = 3;
 const BASE_RETRY_DELAY_MS = 1_000;
 const MAX_RETRY_DELAY_MS = 15_000;
@@ -63,62 +61,25 @@ const computeBackoffDelay = (
   );
 };
 
-function getSourceImageUrl(options: GenerateImageOptions): string | undefined {
-  const sourceImage = options.originalImages?.[0];
-  if (!sourceImage) return undefined;
-  if (sourceImage.url) return sourceImage.url;
-  if (!sourceImage.b64Json) return undefined;
-
-  return `data:${sourceImage.mimeType ?? "image/png"};base64,${sourceImage.b64Json}`;
-}
-
-async function generateTextToImage(prompt: string): Promise<GenerateImageResponse> {
-  fal.config({ credentials: ENV.falKey });
-
-  let lastError: unknown;
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      const result = await fal.subscribe(FAL_TEXT_TO_IMAGE_MODEL, {
-        input: {
-          prompt,
-          image_size: IMAGE_SIZE,
-          num_images: 1,
-          output_format: "png",
-        },
-      });
-      const url = result.data.images?.[0]?.url;
-
-      if (!url) {
-        throw new Error("Image generation succeeded but returned no image URL");
-      }
-
-      return { url };
-    } catch (error) {
-      lastError = error;
-      if (attempt === MAX_RETRIES) throw error;
-
-      console.warn(
-        `Image generation retry ${attempt + 1}/${MAX_RETRIES} after fal.ai client error`,
-      );
-      await sleep(computeBackoffDelay(attempt));
-    }
+export async function generateImage(
+  options: GenerateImageOptions,
+): Promise<GenerateImageResponse> {
+  if (!ENV.falKey) {
+    throw new Error("FAL_KEY is not configured");
   }
 
-  throw lastError instanceof Error
-    ? lastError
-    : new Error("Image generation failed after exhausting retries");
-}
-
-async function generateFromSourceImage(
-  prompt: string,
-  imageUrl: string,
-  aspectRatio?: string,
-): Promise<GenerateImageResponse> {
+  const prompt = `${options.prompt.trim()}\n\nQuality requirements: ${PRINT_QUALITY_SUFFIX}.`;
+  const sourceImage = options.originalImages?.[0];
+  const imageUrl = sourceImage?.url ?? (
+    sourceImage?.b64Json
+      ? `data:${sourceImage.mimeType ?? "image/png"};base64,${sourceImage.b64Json}`
+      : undefined
+  );
   let lastError: unknown;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     try {
-      const response = await fetch(FAL_SOURCE_IMAGE_ENDPOINT, {
+      const response = await fetch(FAL_IMAGE_ENDPOINT, {
         method: "POST",
         headers: {
           accept: "application/json",
@@ -128,12 +89,11 @@ async function generateFromSourceImage(
         body: JSON.stringify({
           prompt,
           num_images: 1,
-          aspect_ratio: aspectRatio || "1:1",
+          aspect_ratio: options.aspectRatio || "1:1",
           output_format: "png",
           enhance_prompt: true,
           raw: false,
-          image_url: imageUrl,
-          image_prompt_strength: 0.85,
+          ...(imageUrl ? { image_url: imageUrl, image_prompt_strength: 0.85 } : {}),
         }),
       });
 
@@ -160,7 +120,9 @@ async function generateFromSourceImage(
         );
       }
 
-      const retryAfterMs = parseRetryAfter(response.headers.get("retry-after"));
+      const retryAfterMs = parseRetryAfter(
+        response.headers.get("retry-after"),
+      );
       try {
         await response.body?.cancel();
       } catch {
@@ -173,7 +135,9 @@ async function generateFromSourceImage(
       await sleep(computeBackoffDelay(attempt, retryAfterMs));
     } catch (error) {
       lastError = error;
-      if (attempt === MAX_RETRIES) throw error;
+      if (attempt === MAX_RETRIES) {
+        throw error;
+      }
 
       console.warn(
         `Image generation retry ${attempt + 1}/${MAX_RETRIES} after network error`,
@@ -185,19 +149,4 @@ async function generateFromSourceImage(
   throw lastError instanceof Error
     ? lastError
     : new Error("Image generation failed after exhausting retries");
-}
-
-export async function generateImage(
-  options: GenerateImageOptions,
-): Promise<GenerateImageResponse> {
-  if (!ENV.falKey) {
-    throw new Error("FAL_KEY is not configured");
-  }
-
-  const prompt = `${options.prompt.trim()}\n\nQuality requirements: ${PRINT_QUALITY_SUFFIX}.`;
-  const sourceImageUrl = getSourceImageUrl(options);
-
-  return sourceImageUrl
-    ? generateFromSourceImage(prompt, sourceImageUrl, options.aspectRatio)
-    : generateTextToImage(prompt);
 }
