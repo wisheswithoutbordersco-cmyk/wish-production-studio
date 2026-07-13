@@ -1,5 +1,6 @@
 import sharp from "sharp";
 import { ENV } from "../_core/env";
+import { generateImage } from "../_core/imageGeneration";
 import { invokeLLM } from "../_core/llm";
 import {
   addPageResult,
@@ -10,6 +11,12 @@ import {
   type PageResult,
 } from "../jobs";
 import { storagePut } from "../storage";
+import {
+  SCRIPTORIUM_SYSTEM_PROMPT,
+  buildScriptoriumFallbackPrompt,
+  buildScriptoriumImageRequest,
+  buildScriptoriumUserPrompt,
+} from "./scriptoriumPolicy";
 import { finalizePdf } from "./shared";
 
 const PAGES_PER_CHUNK = 1;
@@ -21,7 +28,7 @@ const IMAGE_GENERATION_ATTEMPTS = 3;
 const COLORING_NEGATIVE_PROMPT =
   "no text, no words, no letters, no numbers, no writing, no captions, no labels, no watermark, no signature, no blur, no distortion, no artifacts";
 
-// ─── Types ───────────────────────────────────────────────────────────────────
+// âââ Types âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 type PageType = "coloring-page" | "text-heavy";
 
@@ -34,13 +41,11 @@ export interface QuickCreateOptions {
   prompt?: string;
   customPrompt?: string;
   pageCount: number;
-  gradeLevel: string;
 }
 
 interface NormalizedOptions {
   prompt: string;
   pageCount: number;
-  gradeLevel: string;
 }
 
 interface ImageApiResponse {
@@ -49,23 +54,24 @@ interface ImageApiResponse {
   }>;
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// âââ Helpers âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 function normalizeOptions(options: QuickCreateOptions): NormalizedOptions {
   const prompt = (options.prompt || options.customPrompt || "").trim();
   const pageCount = Number(options.pageCount);
-  const gradeLevel = String(options.gradeLevel || "").trim();
 
   if (!prompt) throw new Error("Prompt is required");
-  if (!Number.isInteger(pageCount) || pageCount < 1 || pageCount > MAX_PAGE_COUNT) {
+  if (
+    !Number.isInteger(pageCount) ||
+    pageCount < 1 ||
+    pageCount > MAX_PAGE_COUNT
+  ) {
     throw new Error(`Page count must be between 1 and ${MAX_PAGE_COUNT}`);
   }
-  if (!gradeLevel) throw new Error("Grade level is required");
 
   return {
     prompt: prompt.slice(0, 2000),
     pageCount,
-    gradeLevel: gradeLevel.slice(0, 100),
   };
 }
 
@@ -74,20 +80,24 @@ function extractLlmText(result: Awaited<ReturnType<typeof invokeLLM>>): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   return content
-    .map((part) => (part.type === "text" && typeof part.text === "string" ? part.text : ""))
+    .map(part =>
+      part.type === "text" && typeof part.text === "string" ? part.text : ""
+    )
     .join("")
     .trim();
 }
 
 function isColoringRequest(prompt: string): boolean {
-  return /\b(?:coloring|colouring|line art|colour-in|color-in|coloring book|coloring page)\b/i.test(prompt);
+  return /\b(?:coloring|colouring|line art|colour-in|color-in|coloring book|coloring page)\b/i.test(
+    prompt
+  );
 }
 
 function wait(milliseconds: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
 }
 
-// ─── Composition Prompt Generation (LLM) ─────────────────────────────────────
+// âââ Composition Prompt Generation (LLM) âââââââââââââââââââââââââââââââââââââ
 
 async function generatePageComposition(
   options: NormalizedOptions,
@@ -97,44 +107,16 @@ async function generatePageComposition(
   if (isColoringRequest(options.prompt)) {
     return {
       pageType: "coloring-page",
-      imagePrompt: `Simple black-and-white line art coloring page illustration based on: ${options.prompt}. Thick clean outlines, no shading, no color, no background clutter. Kid-friendly for ${options.gradeLevel}. Centered on the page, high contrast, printable, vector-like. Page ${pageIndex + 1} of ${totalPages} with a unique scene.`,
+      imagePrompt: `Create a black-and-white line-art coloring page based exactly on this request: ${options.prompt}. Infer the intended audience, maturity, complexity, detail, and visual sophistication solely from the user's words. Use thick, clean, crisp outlines, no shading, no color, and no background clutter. Center the unique scene on the page with strong contrast and professional vector-like edges. This is page ${pageIndex + 1} of ${totalPages}.`,
     };
   }
 
-  const systemPrompt = `You are an expert graphic designer creating prompts for AI image generation of professional printable educational products.
-
-Given a user's request, create a detailed image generation prompt that describes a COMPLETE full-page design including:
-- Page title and subtitle with the exact text to render
-- All content text, including questions, answers, instructions, activities, labels, and answer blanks, with exact wording
-- Visual theme, including a coordinated color palette, illustration style, and decorative elements
-- Layout structure describing exactly how every section and content item is arranged on the page
-- Decorative illustrations and icons relevant to the subject and audience
-- Footer branding with the exact text "WishesWithoutBordersCo"
-
-RULES:
-- The prompt must describe ONE complete, flat, full-page image at 8.5x11 inches in portrait orientation
-- The image must fill the entire canvas edge-to-edge and must not look like a photographed sheet, mockup, framed object, or page placed on a background
-- ALL text must be included verbatim in the prompt, spelled correctly, factually accurate, and age-appropriate for the stated grade level
-- Include 5-8 substantive content items per page, such as questions, activities, prompts, facts, matching items, or game elements
-- Describe specific colors, font styles, text hierarchy, spacing, panels, shapes, icons, and illustrations
-- Prioritize legibility: strong contrast, generous spacing, clean grouping, and no overlapping text or decorative elements
-- The finished design should look like a professional Canva template: colorful, layered, polished, balanced, and print-ready, with integrated typography and themed illustrations
-- Make this page visually and substantively unique when the product contains multiple pages
-- Always include "WishesWithoutBordersCo" as small, legible footer branding text
-- Do not mention post-production, overlays, editable layers, or adding text later; the generated image itself must be the complete finished page
-
-Return JSON only with this shape: {"imagePrompt":"the complete image-generation prompt"}.`;
-
-  const userPrompt = `USER REQUEST:
-${options.prompt}
-
-GRADE LEVEL:
-${options.gradeLevel}
-
-PAGE:
-${pageIndex + 1} of ${totalPages}
-
-Create the complete image composition prompt for this page. Ensure its content and visual treatment are unique to this page while remaining consistent with the requested product.`;
+  const systemPrompt = SCRIPTORIUM_SYSTEM_PROMPT;
+  const userPrompt = buildScriptoriumUserPrompt({
+    prompt: options.prompt,
+    pageIndex,
+    totalPages,
+  });
 
   try {
     const result = await invokeLLM({
@@ -159,7 +141,9 @@ Create the complete image composition prompt for this page. Ensure its content a
       },
     });
 
-    const parsed = JSON.parse(extractLlmText(result)) as { imagePrompt?: unknown };
+    const parsed = JSON.parse(extractLlmText(result)) as {
+      imagePrompt?: unknown;
+    };
     const imagePrompt =
       typeof parsed.imagePrompt === "string" ? parsed.imagePrompt.trim() : "";
 
@@ -187,11 +171,15 @@ function buildFallbackComposition(
 ): PageComposition {
   return {
     pageType: "text-heavy",
-    imagePrompt: `Create ONE complete, flat, full-page professional printable based on this request: "${options.prompt}". Audience: ${options.gradeLevel}. This is page ${pageIndex + 1} of ${totalPages}. Use an 8.5x11-inch portrait composition filling the entire canvas edge-to-edge, never a photographed paper, mockup, frame, or page on a background. Include a clear title and subtitle with correctly spelled exact wording, concise instructions, and 5-8 substantive age-appropriate content items with all questions, activities, labels, answer choices, and answer blanks rendered directly in the image. Use a cohesive colorful palette, polished font hierarchy, high-contrast readable typography, layered panels and shapes, balanced spacing, subject-relevant icons, and charming themed illustrations. Keep all text unobstructed and prevent decorative elements from overlapping the content. Make the page look like a premium professional Canva template and a finished print-ready educational product. Add the exact small footer branding text "WishesWithoutBordersCo".`,
+    imagePrompt: buildScriptoriumFallbackPrompt({
+      prompt: options.prompt,
+      pageIndex,
+      totalPages,
+    }),
   };
 }
 
-// ─── Image Generation ─────────────────────────────────────────────────────────
+// âââ Image Generation âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 async function generateCompositionImage(prompt: string): Promise<Buffer> {
   let lastError: unknown;
@@ -204,17 +192,14 @@ async function generateCompositionImage(prompt: string): Promise<Buffer> {
           "Content-Type": "application/json",
           Authorization: `Bearer ${ENV.openRouterApiKey}`,
         },
-        body: JSON.stringify({
-          model: "openai/gpt-5-image-mini",
-          prompt,
-          aspect_ratio: "3:4",
-          quality: "high",
-        }),
+        body: JSON.stringify(buildScriptoriumImageRequest(prompt)),
       });
 
       if (!response.ok) {
         const detail = await response.text().catch(() => "");
-        throw new Error(`Image generation failed (${response.status}): ${detail}`);
+        throw new Error(
+          `Image generation failed (${response.status}): ${detail}`
+        );
       }
 
       const result = (await response.json()) as ImageApiResponse;
@@ -230,7 +215,7 @@ async function generateCompositionImage(prompt: string): Promise<Buffer> {
       console.warn(
         `Composition image attempt ${attempt} of ${IMAGE_GENERATION_ATTEMPTS} failed: ${message}`
       );
-      await wait(1000 * 2 ** (attempt - 1));
+      await wait(1000 * 2 ** (attempt -1));
     }
   }
 
@@ -239,11 +224,31 @@ async function generateCompositionImage(prompt: string): Promise<Buffer> {
     : new Error("Image generation failed after 3 attempts");
 }
 
-async function generateColoringPage(imagePrompt: string): Promise<Buffer> {
-  // Use GPT-5 Image Mini for coloring pages too — cleaner line art, better compositions
-  const coloringPrompt = `${imagePrompt}. Style: pure black-and-white line art coloring page. Thick clean outlines only, no shading, no gray tones, no color fills, no background textures. High contrast black lines on pure white background. Vector-like clean edges. Professional coloring book quality suitable for printing.`;
+async function generateColoringPage(compositionImagePrompt: string): Promise<Buffer> {
+  const coloringPrompt = `${compositionImagePrompt}. Style requirements: pure black-and-white line art coloring page, thick clean outlines only, no shading, no gray tones, no color fills, no background textures, high-contrast black lines on a pure white background, exceptionally crisp vector-like edges, sharply defined subjects, premium professional coloring-book quality suitable for high-resolution printing. Negative requirements: ${COLORING_NEGATIVE_PROMPT}.`;
 
-  const rawBuffer = await generateCompositionImage(coloringPrompt);
+  let rawBuffer: Buffer;
+  try {
+    const { url } = await generateImage({
+      prompt: coloringPrompt,
+      aspectRatio: "3:4",
+    });
+    if (!url) throw new Error("fal.ai returned no coloring-page image URL");
+
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(
+        `Failed to download fal.ai coloring page (${response.status})`
+      );
+    }
+    rawBuffer = Buffer.from(await response.arrayBuffer());
+  } catch (error) {
+    console.warn(
+      "fal.ai coloring-page generation failed; using the high-quality OpenRouter fallback:",
+      error
+    );
+    rawBuffer = await generateCompositionImage(coloringPrompt);
+  }
 
   // Post-process to ensure clean B&W output
   const cleaned = await sharp(rawBuffer)
@@ -276,7 +281,7 @@ async function generateTextHeavyPage(imagePrompt: string): Promise<Buffer> {
     .toBuffer();
 }
 
-// ─── Page Generation ─────────────────────────────────────────────────────────
+// âââ Page Generation âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 async function generateQuickCreatePage(
   pageIndex: number,
@@ -293,7 +298,7 @@ async function generateQuickCreatePage(
 
   const finalBuffer =
     composition.pageType === "coloring-page"
-      ? await generateColoringPage(composition.imagePrompt)
+      ? await generateColoringPage(compositionnimagePrompt)
       : await generateTextHeavyPage(composition.imagePrompt);
 
   const { url: imageUrl } = await storagePut(
@@ -310,9 +315,11 @@ async function generateQuickCreatePage(
   };
 }
 
-// ─── Chunk Processing & Job Creation ─────────────────────────────────────────
+// âââ Chunk Processing & Job Creation âââââââââââââââââââââââââââââââââââââââââ
 
-async function processQuickCreateChunkInternal(job: GenerationJob): Promise<void> {
+async function processQuickCreateChunkInternal(
+  job: GenerationJob
+): Promise<void> {
   const startIndex = job.nextPageIndex;
   const endIndex = Math.min(startIndex + PAGES_PER_CHUNK, job.totalPages);
 
@@ -330,7 +337,8 @@ async function processQuickCreateChunkInternal(job: GenerationJob): Promise<void
         statusMessage: `Generated page ${pageIndex + 1} of ${job.totalPages}`,
       });
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
       console.error(`Quick Create page ${pageIndex + 1} failed:`, errorMessage);
       addPageResult(job.id, {
         pageNumber: pageIndex + 1,
@@ -345,10 +353,10 @@ async function processQuickCreateChunkInternal(job: GenerationJob): Promise<void
     }
   }
 
-  const updatedJob = getJob(job.id);
-  if (updatedJob && updatedJob.nextPageIndex >= updatedJob.totalPages) {
-    await finalizePdf(updatedJob);
-  }
+  const updatedJobh = getJob(jobid);
+  if (updatedJobh && updatedJobh.nextPageIndex >= updatedJobh.totalPages) {
+    await finalizePdf(updatedJobh);
+  } if (!updatedJobh) { console.error("Job not found after processing"); }
 }
 
 export function createQuickCreateJob(options: QuickCreateOptions): string {
