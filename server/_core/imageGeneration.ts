@@ -27,7 +27,7 @@ const MAX_RETRIES = 3;
 const BASE_RETRY_DELAY_MS = 1_000;
 const MAX_RETRY_DELAY_MS = 15_000;
 const PRINT_QUALITY_SUFFIX =
-  "ultra detailed, professional quality, print-ready, high resolution, masterful composition";
+  "highest-quality 4-megapixel render, ultra-detailed professional publishing quality, bold saturated vivid colors, high contrast, rich vibrant palette, intense clean color separation, crisp clean edges, sharply defined characters and illustrations, refined textures, precise anatomy, excellent clarity, artifact-free, masterful composition, polished and print-ready; avoid beige, cream, muted earth tones, dusty colors, desaturated or washed-out color, and soft pastel palettes unless explicitly requested";
 
 const sleep = (ms: number) =>
   new Promise<void>(resolve => setTimeout(resolve, ms));
@@ -39,30 +39,28 @@ const parseRetryAfter = (value: string | null): number | undefined => {
   if (Number.isFinite(seconds)) return Math.max(0, seconds * 1_000);
 
   const retryAt = Date.parse(value);
-  return Number.isNaN(retryAt)
-    ? undefined
-    : Math.max(0, retryAt - Date.now());
+  return Number.isNaN(retryAt) ? undefined : Math.max(0, retryAt - Date.now());
 };
 
 const computeBackoffDelay = (
   attempt: number,
-  retryAfterMs?: number,
+  retryAfterMs?: number
 ): number => {
   const exponentialDelay = Math.min(
     BASE_RETRY_DELAY_MS * 2 ** attempt,
-    MAX_RETRY_DELAY_MS,
+    MAX_RETRY_DELAY_MS
   );
   const jitteredDelay =
     exponentialDelay / 2 + Math.random() * (exponentialDelay / 2);
 
   return Math.min(
     Math.max(jitteredDelay, retryAfterMs ?? 0),
-    MAX_RETRY_DELAY_MS,
+    MAX_RETRY_DELAY_MS
   );
 };
 
 export async function generateImage(
-  options: GenerateImageOptions,
+  options: GenerateImageOptions
 ): Promise<GenerateImageResponse> {
   if (!ENV.falKey) {
     throw new Error("FAL_KEY is not configured");
@@ -70,11 +68,11 @@ export async function generateImage(
 
   const prompt = `${options.prompt.trim()}\n\nQuality requirements: ${PRINT_QUALITY_SUFFIX}.`;
   const sourceImage = options.originalImages?.[0];
-  const imageUrl = sourceImage?.url ?? (
-    sourceImage?.b64Json
+  const imageUrl =
+    sourceImage?.url ??
+    (sourceImage?.b64Json
       ? `data:${sourceImage.mimeType ?? "image/png"};base64,${sourceImage.b64Json}`
-      : undefined
-  );
+      : undefined);
   let lastError: unknown;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -93,7 +91,10 @@ export async function generateImage(
           output_format: "png",
           enhance_prompt: true,
           raw: false,
-          ...(imageUrl ? { image_url: imageUrl, image_prompt_strength: 0.85 } : {}),
+          safety_tolerance: "2",
+          ...(imageUrl
+            ? { image_url: imageUrl, image_prompt_strength: 0.85 }
+            : {}),
         }),
       });
 
@@ -107,7 +108,9 @@ export async function generateImage(
         const url = result.images?.[0]?.url;
 
         if (!url) {
-          throw new Error("Image generation succeeded but returned no image URL");
+          throw new Error(
+            "Image generation succeeded but returned no image URL"
+          );
         }
 
         return { url };
@@ -116,13 +119,11 @@ export async function generateImage(
       if (attempt === MAX_RETRIES) {
         const detail = await response.text().catch(() => "");
         throw new Error(
-          `Image generation request failed (${response.status} ${response.statusText})${detail ? `: ${detail}` : ""}`,
+          `Image generation request failed (${response.status} ${response.statusText})${detail ? `: ${detail}` : ""}`
         );
       }
 
-      const retryAfterMs = parseRetryAfter(
-        response.headers.get("retry-after"),
-      );
+      const retryAfterMs = parseRetryAfter(response.headers.get("retry-after"));
       try {
         await response.body?.cancel();
       } catch {
@@ -130,7 +131,7 @@ export async function generateImage(
       }
 
       console.warn(
-        `Image generation retry ${attempt + 1}/${MAX_RETRIES} after status ${response.status}`,
+        `Image generation retry ${attempt + 1}/${MAX_RETRIES} after status ${response.status}`
       );
       await sleep(computeBackoffDelay(attempt, retryAfterMs));
     } catch (error) {
@@ -140,7 +141,7 @@ export async function generateImage(
       }
 
       console.warn(
-        `Image generation retry ${attempt + 1}/${MAX_RETRIES} after network error`,
+        `Image generation retry ${attempt + 1}/${MAX_RETRIES} after network error`
       );
       await sleep(computeBackoffDelay(attempt));
     }
