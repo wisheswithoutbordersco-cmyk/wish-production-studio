@@ -1,41 +1,31 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { GenerationProgress } from "@/components/GenerationProgress";
 import { useGenerationJob } from "@/hooks/useGenerationJob";
 import { Zap, Sparkles } from "lucide-react";
 
 const PAGE_OPTIONS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30];
 
-const GRADE_LEVELS = [
-  "Pre-K",
-  "Kindergarten",
-  "1st Grade",
-  "2nd Grade",
-  "3rd Grade",
-  "4th Grade",
-  "5th Grade",
-  "6th Grade",
-  "Middle School",
-  "High School",
-  "Adult",
-];
-
 export default function QuickCreateGenerator() {
   const [prompt, setPrompt] = useState("");
   const [pageCount, setPageCount] = useState(5);
-  const [gradeLevel, setGradeLevel] = useState("3rd Grade");
-  const { jobState, isGenerating, progress, startJob, cancelJob } = useGenerationJob();
+  const { jobState, isGenerating, progress, startJob, cancelJob } =
+    useGenerationJob();
 
   const handleGenerate = () => {
     if (!prompt.trim()) return;
     startJob("quick-create", {
       customPrompt: prompt.trim(),
       pageCount,
-      gradeLevel,
     });
   };
 
@@ -48,7 +38,8 @@ export default function QuickCreateGenerator() {
             Quick Create
           </CardTitle>
           <CardDescription>
-            Describe what you want. Pick your pages. Generate.
+            Describe any printable book, workbook, planner, tracker, guide, or
+            activity product. Your request defines the format.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
@@ -60,25 +51,12 @@ export default function QuickCreateGenerator() {
             <Textarea
               id="quick-prompt"
               value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="e.g. Math worksheet about multiplication for 3rd graders with a dinosaur theme, or Baby shower bingo game with pink elephants, or SEL workbook about managing emotions..."
+              onChange={e => setPrompt(e.target.value)}
+              placeholder="e.g. A vibrant Mediterranean recipe book, a creative-writing workbook for adults, a 30-day fitness tracker, or a dinosaur multiplication worksheet for 3rd graders..."
               disabled={isGenerating}
               rows={5}
               className="min-h-32 resize-y border-white/15 bg-black text-white placeholder:text-white/40 focus-visible:border-white/40 focus-visible:ring-white/10"
             />
-          </div>
-
-          {/* Grade Level */}
-          <div className="space-y-2">
-            <Label>Grade Level</Label>
-            <Select value={gradeLevel} onValueChange={setGradeLevel} disabled={isGenerating}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {GRADE_LEVELS.map(g => (
-                  <SelectItem key={g} value={g}>{g}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
           </div>
 
           {/* Page Count Buttons */}
@@ -111,7 +89,9 @@ export default function QuickCreateGenerator() {
             size="lg"
           >
             <Sparkles className="h-4 w-4 mr-2" />
-            {isGenerating ? "Generating..." : `Generate ${pageCount} Page${pageCount > 1 ? "s" : ""}`}
+            {isGenerating
+              ? "Generating..."
+              : `Generate ${pageCount} Page${pageCount > 1 ? "s" : ""}`}
           </Button>
         </CardContent>
       </Card>
@@ -119,7 +99,9 @@ export default function QuickCreateGenerator() {
       {/* Output Preview */}
       <Card className="border-border/50 bg-card">
         <CardHeader>
-          <CardTitle className="text-sm font-medium text-muted-foreground">Output Preview</CardTitle>
+          <CardTitle className="text-sm font-medium text-muted-foreground">
+            Output Preview
+          </CardTitle>
         </CardHeader>
         <CardContent>
           {!jobState && !isGenerating ? (
@@ -136,7 +118,6 @@ export default function QuickCreateGenerator() {
               productMeta={{
                 title: prompt.slice(0, 60) || "Quick Create",
                 type: "Quick Create",
-                ageRange: gradeLevel,
                 pageCount,
               }}
             />
