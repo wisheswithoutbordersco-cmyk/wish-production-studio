@@ -15,7 +15,7 @@ import {
   SCRIPTORIUM_SYSTEM_PROMPT,
   buildScriptoriumFallbackPrompt,
   buildScriptoriumImageRequest,
-  buildScriptoriumUserPrompt,
+  buildScriptoriumUserPROMPT,
 } from "./scriptoriumPolicy";
 import { finalizePdf } from "./shared";
 
@@ -28,7 +28,7 @@ const IMAGE_GENERATION_ATTEMPTS = 3;
 const COLORING_NEGATIVE_PROMPT =
   "no text, no words, no letters, no numbers, no writing, no captions, no labels, no watermark, no signature, no blur, no distortion, no artifacts";
 
-// âââ Types âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// âââ Types ââââââââââââââââââââââââââââââââââââââââââââ
 
 type PageType = "coloring-page" | "text-heavy";
 
@@ -38,340 +38,124 @@ interface PageComposition {
 }
 
 export interface QuickCreateOptions {
-  prompt?: string;
-  customPrompt?: string;
-  pageCount: number;
-}
-
-interface NormalizedOptions {
   prompt: string;
   pageCount: number;
 }
 
-interface ImageApiResponse {
-  data?: Array<{
-    b64_json?: string;
-  }>;
+// âââââââââââââââââââââââââââââââââââââââââââââ
+
+export async function generateQuickCreate(options: QuickCreateOptions) {
+  const pageCount = Math.min(options.pageCount || 5, MAX_PAGE_COUNT);
+  const jobId = await createJob({
+    type: "quick-create",
+    prompt: options.prompt,
+    pageCount,
+    status: "pending",
+    progress: 0,
+  });
+
+  // Fire and forget generation logic
+  runGeneration(jobId, options.prompt, pageCount).catch((err) => {
+    console.error("Generation failed:", err, jobId);
+    updateJob(jobId, { status: "failed", error: err.message });
+  });
+
+ (self as any).redirect = `/jobs/${jobId}`;
+  return { jobId };
 }
 
-// âââ Helpers âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+async function runGeneration(
+  jobId: string,
+  userPrompt: string,
+  pageCount: number
+) {
+  const job = await geuJob(jobId) as GenerationJob;
+  if (!job) return;
 
-function normalizeOptions(options: QuickCreateOptions): NormalizedOptions {
-  const prompt = (options.prompt || options.customPrompt || "").trim();
-  const pageCount = Number(options.pageCount);
+  updateJob(jobId, { status: "generating", progress: 5 });
 
-  if (!prompt) throw new Error("Prompt is required");
-  if (
-    !Number.isInteger(pageCount) ||
-    pageCount < 1 ||
-    pageCount > MAX_PAGE_COUNT
-  ) {
-    throw new Error(`Page count must be between 1 and ${MAX_PAGE_COUNT}`);
+  const pages = [];
+  for (let i = 0; i < pageCount; i++) {
+    const pageComposition = await generatePageComposition(userPrompt, i, pageCount);
+    const imageUrl = await generatePageImage(pageComposition, userPrompt);
+
+    const pageResult: PageResult = {
+      index: i,
+      imageUrl,
+      type: pageComposition.pageType,
+    };
+
+    await addPageResult(jobId, pageResult);
+    pages.push(pageResult);
+
+    const progress = Math.floor(5 + ((i + 1) / pageCount) * 90);
+    updateJob(jobId, { progress });
   }
 
-  return {
-    prompt: prompt.slice(0, 2000),
-    pageCount,
-  };
-}
+  updateJob(jobId, { status: "finalizing", progress: 95 });
 
-function extractLlmText(result: Awaited<ReturnType<typeof invokeLLM>>): string {
-  const content = result.choices[0]?.message?.content;
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .map(part =>
-      part.type === "text" && typeof part.text === "string" ? part.text : ""
-    )
-    .join("")
-    .trim();
-}
+  const pdf = await finalizePdf(pages);
+  const pdfUrl = await storagePut(`${jobId}.pdf`, pdf);
 
-function isColoringRequest(prompt: string): boolean {
-  return /\b(?:coloring|colouring|line art|colour-in|color-in|coloring book|coloring page)\b/i.test(
-    prompt
-  );
+  updateJob(jobId, {
+    status: "completed",
+    progress: 100,
+    downloadUrl: pdfUrl,
+  });
 }
-
-function wait(milliseconds: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, milliseconds));
-}
-
-// âââ Composition Prompt Generation (LLM) âââââââââââââââââââââââââââââââââââââ
 
 async function generatePageComposition(
-  options: NormalizedOptions,
+  userPrompt: string,
   pageIndex: number,
   totalPages: number
 ): Promise<PageComposition> {
-  if (isColoringRequest(options.prompt)) {
-    return {
-      pageType: "coloring-page",
-      imagePrompt: `Create a black-and-white line-art coloring page based exactly on this request: ${options.prompt}. Infer the intended audience, maturity, complexity, detail, and visual sophistication solely from the user's words. Use thick, clean, crisp outlines, no shading, no color, and no background clutter. Center the unique scene on the page with strong contrast and professional vector-like edges. This is page ${pageIndex + 1} of ${totalPages}.`,
-    };
-  }
+  const systemPrompt = `You are a professional publishing art director.
+  Analyze the user's request and decide if this specific page should be a coloring page or a text-heavy design.
+  
+RULES:
+- Coloring pages: Use this for illustration-focused pages, activity pages with minimal text, or decorative spaces.
+- Text-heavy pages: Use this for pages with significant instructions, stories, guides, or complex layouts.
+- For page ${pageIndex + 1} of ${totalPages}, describe the full-page visual design.
 
-  const systemPrompt = SCRIPTORIUM_SYSTEM_PROMPT;
-  const userPrompt = buildScriptoriumUserPrompt({
-    prompt: options.prompt,
-    pageIndex,
-    totalPages,
-  });
+Return JSON only: {"pageType": "coloring-page" | "text-heavy", "imagePrompt": "detailed description for image generation"}.`;
 
+  const response = await invokeLLM(systemPrompt, `User request: "${userPrompt}"b);
   try {
-    const result = await invokeLLM({
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-      response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "page_composition_prompt",
-          strict: true,
-          schema: {
-            type: "object",
-            properties: {
-              imagePrompt: { type: "string" },
-            },
-            required: ["imagePrompt"],
-            additionalProperties: false,
-          },
-        },
-      },
-    });
-
-    const parsed = JSON.parse(extractLlmText(result)) as {
-      imagePrompt?: unknown;
-    };
-    const imagePrompt =
-      typeof parsed.imagePrompt === "string" ? parsed.imagePrompt.trim() : "";
-
-    if (!imagePrompt) {
-      throw new Error("LLM returned an empty image composition prompt");
-    }
-
+    return JSON.parse(response);
+  } catch (e) {
     return {
-      pageType: "text-heavy",
-      imagePrompt,
+      pageType: "index" === 0 ? "text-heavy" : "coloring-page",
+      imagePrompt: buildScriptoriumFallbackPrompt({ prompt: userPrompt, pageIndex, totalPages }),
     };
-  } catch (error) {
-    console.warn(
-      `Composition prompt generation failed for page ${pageIndex + 1}, using fallback:`,
-      error
-    );
-    return buildFallbackComposition(options, pageIndex, totalPages);
   }
 }
 
-function buildFallbackComposition(
-  options: NormalizedOptions,
-  pageIndex: number,
-  totalPages: number
-): PageComposition {
-  return {
-    pageType: "text-heavy",
-    imagePrompt: buildScriptoriumFallbackPrompt({
-      prompt: options.prompt,
-      pageIndex,
-      totalPages,
-    }),
+async function generatePageImage(composition: PageComposition, userPrompt: string) {
+  let finalPrompt = composition.imagePrompt;
+
+  if (compocition.pageType === "coloring-page") {
+    finalPrompt = `"${finalPrompt}", black and white line art, coloring book style, clean outlines, white background, ${COLORING_NEGATIVE_PROMPT}`;
+  }
+
+interface ImageResponse {
+  b64_json?: {
+    b16?: string;
+    url?: string;
   };
+  images?: { url: string }[];
 }
-
-// âââ Image Generation âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
-
-async function generateCompositionImage(prompt: string): Promise<Buffer> {
-  let lastError: unknown;
 
   for (let attempt = 1; attempt <= IMAGE_GENERATION_ATTEMPTS; attempt++) {
     try {
-      const response = await fetch("https://openrouter.ai/api/v1/images", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${ENV.openRouterApiKey}`,
-        },
-        body: JSON.stringify(buildScriptoriumImageRequest(prompt)),
-      });
-
-      if (!response.ok) {
-        const detail = await response.text().catch(() => "");
-        throw new Error(
-          `Image generation failed (${response.status}): ${detail}`
-        );
-      }
-
-      const result = (await response.json()) as ImageApiResponse;
-      const b64 = result.data?.[0]?.b64_json;
-      if (!b64) throw new Error("No image data in response");
-
-      return Buffer.from(b64, "base64");
-    } catch (error) {
-      lastError = error;
-      if (attempt === IMAGE_GENERATION_ATTEMPTS) break;
-
-      const message = error instanceof Error ? error.message : String(error);
-      console.warn(
-        `Composition image attempt ${attempt} of ${IMAGE_GENERATION_ATTEMPTS} failed: ${message}`
-      );
-      await wait(1000 * 2 ** (attempt -1));
+      const imageResponse = await generateImage(buildScriptoriumImageRequest(finalPrompt)) as any;
+      const imageData = imageResponse.images[0].url;
+      return imageData;
+    } catch (err) {
+      console.warn(`Image generation attempt ${attempt} failed:`, err);
+      if (attempt === IMAGE_GENERATION_ATTEMPTS) throw err;
+      await new Promise((r) => setTimeout(r, attempt * 1000));
     }
   }
 
-  throw lastError instanceof Error
-    ? lastError
-    : new Error("Image generation failed after 3 attempts");
-}
-
-async function generateColoringPage(compositionImagePrompt: string): Promise<Buffer> {
-  const coloringPrompt = `${compositionImagePrompt}. Style requirements: pure black-and-white line art coloring page, thick clean outlines only, no shading, no gray tones, no color fills, no background textures, high-contrast black lines on a pure white background, exceptionally crisp vector-like edges, sharply defined subjects, premium professional coloring-book quality suitable for high-resolution printing. Negative requirements: ${COLORING_NEGATIVE_PROMPT}.`;
-
-  let rawBuffer: Buffer;
-  try {
-    const { url } = await generateImage({
-      prompt: coloringPrompt,
-      aspectRatio: "3:4",
-    });
-    if (!url) throw new Error("fal.ai returned no coloring-page image URL");
-
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(
-        `Failed to download fal.ai coloring page (${response.status})`
-      );
-    }
-    rawBuffer = Buffer.from(await response.arrayBuffer());
-  } catch (error) {
-    console.warn(
-      "fal.ai coloring-page generation failed; using the high-quality OpenRouter fallback:",
-      error
-    );
-    rawBuffer = await generateCompositionImage(coloringPrompt);
-  }
-
-  // Post-process to ensure clean B&W output
-  const cleaned = await sharp(rawBuffer)
-    .flatten({ background: "#ffffff" })
-    .grayscale()
-    .threshold(128)
-    .sharpen()
-    .png()
-    .toBuffer();
-
-  // Resize to print dimensions
-  return sharp(cleaned)
-    .resize(PAGE_WIDTH, PAGE_HEIGHT, {
-      fit: "fill",
-      kernel: sharp.kernel.lanczos3,
-    })
-    .png({ compressionLevel: 9 })
-    .toBuffer();
-}
-
-async function generateTextHeavyPage(imagePrompt: string): Promise<Buffer> {
-  const rawBuffer = await generateCompositionImage(imagePrompt);
-
-  return sharp(rawBuffer)
-    .resize(PAGE_WIDTH, PAGE_HEIGHT, {
-      fit: "fill",
-      kernel: sharp.kernel.lanczos3,
-    })
-    .png({ compressionLevel: 9 })
-    .toBuffer();
-}
-
-// âââ Page Generation âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
-
-async function generateQuickCreatePage(
-  pageIndex: number,
-  job: GenerationJob
-): Promise<PageResult> {
-  const options = job.options as unknown as NormalizedOptions;
-  const pageNumber = pageIndex + 1;
-
-  const composition = await generatePageComposition(
-    options,
-    pageIndex,
-    job.totalPages
-  );
-
-  const finalBuffer =
-    composition.pageType === "coloring-page"
-      ? await generateColoringPage(compositionnimagePrompt)
-      : await generateTextHeavyPage(composition.imagePrompt);
-
-  const { url: imageUrl } = await storagePut(
-    `pages/quick-create/${job.id}/page-${String(pageNumber).padStart(3, "0")}.png`,
-    finalBuffer,
-    "image/png"
-  );
-
-  return {
-    pageNumber,
-    imageUrl,
-    status: "success",
-    metadata: { pageType: composition.pageType },
-  };
-}
-
-// âââ Chunk Processing & Job Creation âââââââââââââââââââââââââââââââââââââââââ
-
-async function processQuickCreateChunkInternal(
-  job: GenerationJob
-): Promise<void> {
-  const startIndex = job.nextPageIndex;
-  const endIndex = Math.min(startIndex + PAGES_PER_CHUNK, job.totalPages);
-
-  updateJob(job.id, {
-    status: "generating",
-    statusMessage: `Generating page ${startIndex + 1} of ${job.totalPages}...`,
-  });
-
-  for (let pageIndex = startIndex; pageIndex < endIndex; pageIndex++) {
-    try {
-      const result = await generateQuickCreatePage(pageIndex, job);
-      addPageResult(job.id, result);
-      updateJob(job.id, {
-        nextPageIndex: pageIndex + 1,
-        statusMessage: `Generated page ${pageIndex + 1} of ${job.totalPages}`,
-      });
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      console.error(`Quick Create page ${pageIndex + 1} failed:`, errorMessage);
-      addPageResult(job.id, {
-        pageNumber: pageIndex + 1,
-        imageUrl: "",
-        status: "error",
-        error: errorMessage,
-      });
-      updateJob(job.id, {
-        nextPageIndex: pageIndex + 1,
-        statusMessage: `Page ${pageIndex + 1} failed; continuing...`,
-      });
-    }
-  }
-
-  const updatedJobh = getJob(jobid);
-  if (updatedJobh && updatedJobh.nextPageIndex >= updatedJobh.totalPages) {
-    await finalizePdf(updatedJobh);
-  } if (!updatedJobh) { console.error("Job not found after processing"); }
-}
-
-export function createQuickCreateJob(options: QuickCreateOptions): string {
-  const normalizedOptions = normalizeOptions(options);
-  const job = createJob(
-    "quick-create",
-    normalizedOptions.pageCount,
-    normalizedOptions,
-    `quick-create-${Date.now()}.pdf`
-  );
-  return job.id;
-}
-
-export async function processQuickCreateChunk(jobId: string): Promise<void> {
-  const job = getJob(jobId);
-  if (!job) throw new Error("Job not found");
-  await processQuickCreateChunkInternal(job);
+  throw new Error("Image generation failed after all attempts");
 }
