@@ -212,13 +212,13 @@ const normalizeToolChoice = (
   return toolChoice;
 };
 
-const OPENROUTER_CHAT_COMPLETIONS_URL =
-  "https://openrouter.ai/api/v1/chat/completions";
-const DEFAULT_MODEL = "openai/gpt-4o";
+const OPENAI_CHAT_COMPLETIONS_URL =
+  "https://api.openai.com/v1/chat/completions";
+const DEFAULT_MODEL = "gpt-4o";
 
 const assertApiKey = () => {
-  if (!ENV.openRouterApiKey) {
-    throw new Error("OPENROUTER_API_KEY is not configured");
+  if (!ENV.openaiApiKey) {
+    throw new Error("OPENAI_API_KEY is not configured");
   }
 };
 
@@ -397,13 +397,13 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     payload.response_format = normalizedResponseFormat;
   }
 
-  const response = await fetchWithBackoff(OPENROUTER_CHAT_COMPLETIONS_URL, {
+  const response = await fetchWithBackoff(OPENAI_CHAT_COMPLETIONS_URL, {
     method: "POST",
     headers: {
       accept: "application/json",
       "content-type": "application/json",
-      authorization: `Bearer ${ENV.openRouterApiKey}`,
-      "X-Title": "Wish Production Studio",
+      authorization: `Bearer ${ENV.openaiApiKey}`,
+      
     },
     body: JSON.stringify(payload),
   });
