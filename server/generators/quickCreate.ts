@@ -11,6 +11,10 @@ import {
 } from "../jobs";
 import { storagePut } from "../storage";
 import { finalizePdf } from "./shared";
+import {
+  buildQuickCreateTextOverlaySvg,
+  type QuickCreatePageCopy,
+} from "./quickCreateTextOverlay";
 
 // Inlined to keep the Railway build self-contained; no separate policy module is required.
 export interface ScriptoriumPageContext {
@@ -19,42 +23,34 @@ export interface ScriptoriumPageContext {
   totalPages: number;
 }
 
-export const SCRIPTORIUM_IMAGE_MODEL = "openai/gpt-image-2";
+export const SCRIPTORIUM_IMAGE_MODEL = "fal-ai/flux-pro/v1.1-ultra";
 
 export const SCRIPTORIUM_RENDER_QUALITY =
   "premium professional publishing quality, bold saturated vivid colors, high contrast, a rich vibrant palette, intense clean color separation, crisp clean edges, sharply defined characters and illustrations, refined textures, precise typography, excellent legibility, artifact-free, polished, detailed, and print-ready; avoid beige, cream, muted earth tones, dusty colors, desaturated color, washed-out color, and soft pastel palettes unless the user explicitly requests them";
 
-export const SCRIPTORIUM_SYSTEM_PROMPT = `You are an expert publishing art director and product designer creating prompts for AI image generation of professional printable books, workbooks, journals, planners, trackers, guides, activity products, and other page-based publications.
+export const SCRIPTORIUM_SYSTEM_PROMPT = `You are an expert publishing content editor and art director for professional printable books, workbooks, journals, planners, trackers, guides, activity products, and other page-based publications.
 
-CORE INTENT RULE:
-- The USER REQUEST is authoritative. First infer the exact product type, purpose, structure, tone, intended audience, complexity, and use solely from the user's words, then design that product.
-- Never turn a request into a school worksheet, lesson, quiz, math exercise, classroom activity, or answer-blank page unless the user explicitly asks for an educational or practice-based product.
-- Recipe books must contain recipes and appropriate recipe-page structure. Creative-writing workbooks must support writing craft and exercises. Fitness trackers must contain fitness plans, logs, metrics, and reflection fields. Journals, planners, games, storybooks, reference guides, and other products must use the conventions appropriate to their requested form.
-- If the user says adult, child, kid, teen, beginner, advanced, or provides another audience cue, follow that cue. If no audience is stated, infer the best fit from the requested product and content. Do not invent a classroom context.
+The USER REQUEST is authoritative. Infer the product type, purpose, structure, tone, audience, complexity, and use solely from the user's words. Never turn a request into a school worksheet, lesson, quiz, math exercise, classroom activity, or answer-blank page unless the user explicitly requests that format.
 
-Given the user's request, create a detailed image-generation prompt for ONE COMPLETE full-page design. Include only the content and page elements that genuinely belong in the requested product, such as:
-- An appropriate page title, subtitle, or section heading with exact text where useful
-- The exact body copy, instructions, prompts, fields, labels, recipes, schedules, stories, lists, or activities needed for that specific page
-- A coordinated visual theme, palette, typography, illustration style, and decorative treatment that matches the request
-- A clear layout describing how every necessary section and content item is arranged
-- Purposeful illustrations, characters, icons, charts, or decorative elements when they support the product
-- Footer branding with the exact text "WishesWithoutBordersCo"
+Create the exact visible copy and a coordinated artwork brief for ONE complete 8.5x11-inch portrait page. The visible copy will be typeset deterministically after the artwork is generated, so spelling, facts, labels, and sentences must be publication-ready.
 
-RULES:
-- Describe ONE complete, flat, full-page image at 8.5x11 inches in portrait orientation
-- Fill the entire canvas edge-to-edge; never depict a photographed sheet, mockup, framed object, or page placed on another background
-- Follow the user's requested format and content literally; do not inject generic educational material or unrelated school exercises
-- Include an amount of content appropriate to the page's purpose. Do not force a fixed number of questions, blanks, panels, or activities
-- Include all required text verbatim in the image prompt, with correct spelling and factual accuracy
-- Describe specific colors, font styles, text hierarchy, spacing, panels, shapes, icons, and illustrations appropriate to the requested aesthetic
-- Prioritize legibility with strong contrast, generous spacing, clean grouping, and no overlap between text and decorative elements
-- For every full-color page, explicitly demand bold saturated vivid colors, high contrast, and a rich vibrant palette with intense clean color separation. Reject beige, cream, muted earth tones, dusty colors, desaturated or washed-out color, and soft pastel palettes unless the user explicitly requests one of those looks
-- Use premium publishing aesthetics with crisp clean edges, sharply defined characters and illustrations, refined detail, and polished print-ready composition
-- Keep each page visually and substantively unique while maintaining a coherent product-wide style
-- Always include "WishesWithoutBordersCo" as small, legible footer branding text
-- Do not mention post-production, overlays, editable layers, or adding text later; the generated image itself must be the complete finished page
+CONTENT RULES:
+- Write a concise page title and optional subtitle.
+- Provide between 1 and 10 content sections appropriate to the requested product. Each section needs a short heading and accurate body copy.
+- Keep section headings under 7 words and body copy concise enough to fit a printable page.
+- For fact or reference requests, supply real, accurate information rather than placeholders.
+- For multi-page products, make this page substantively unique while preserving a coherent product-wide style.
+- Put any user-requested exact footer phrase in footerNote. Do not include WishesWithoutBordersCo there; branding is added automatically.
 
-Return JSON only with this shape: {"imagePrompt":"the complete image-generation prompt"}.`;
+ARTWORK RULES:
+- artPrompt describes ONLY the edge-to-edge background artwork, illustrations, palette, decorations, and visual theme.
+- artPrompt must explicitly request NO visible words, letters, numbers, captions, labels, logos, signatures, or watermarks.
+- Keep the central page calm enough for dark translucent content panels, while retaining vivid subject-relevant illustrations around the edges and between panels.
+- Demand bold saturated vivid colors, high contrast, rich vibrant color, crisp clean edges, sharply defined subjects, refined detail, and polished print-ready quality.
+- Avoid beige, cream, muted earth tones, dusty, desaturated, washed-out, and soft pastel treatments unless the user explicitly requests them.
+- Fill the canvas edge-to-edge; never depict a photographed sheet, mockup, frame, or page placed on another background.
+
+Return strict JSON with title, subtitle, sections, footerNote, and artPrompt. All visible wording belongs in the text fields; artPrompt must contain no requested page copy.`;
 
 export function buildScriptoriumUserPrompt({
   prompt,
@@ -67,7 +63,7 @@ ${prompt}
 PAGE:
 ${pageIndex + 1} of ${totalPages}
 
-The user request above is the sole source of product type, audience, complexity, tone, and purpose. Create the complete image composition prompt for this page. Ensure its content and visual treatment are unique to this page while remaining consistent with the requested product. For a full-color page, require bold saturated vivid colors, high contrast, and a rich vibrant palette; explicitly avoid beige, cream, muted earth tones, dusty, desaturated, washed-out, and soft pastel color treatments unless the user requested them.`;
+Create accurate, final visible copy for this page and a separate text-free Flux Pro Ultra artwork brief. Keep the copy concise enough for an 8.5x11-inch printable page. Preserve any exact title, wording, count, or footer phrase requested by the user.`;
 }
 
 export function buildScriptoriumFallbackPrompt({
@@ -75,13 +71,13 @@ export function buildScriptoriumFallbackPrompt({
   pageIndex,
   totalPages,
 }: ScriptoriumPageContext): string {
-  return `Create ONE complete, flat, full-page professional publication page based exactly on this request: "${prompt}". Infer the product type, audience, complexity, tone, and purpose solely from the user's words. This is page ${pageIndex + 1} of ${totalPages}. Preserve the requested product type and use the structure, content, fields, copy, and page conventions that genuinely belong to it. Do not turn the request into a school worksheet, quiz, lesson, math exercise, or answer-blank activity unless the user explicitly requested that format. Use an 8.5x11-inch portrait composition filling the entire canvas edge-to-edge, never a photographed paper, mockup, frame, or page on a background. Render all necessary page text directly in the image with correct spelling and a polished font hierarchy. For a full-color page, use bold saturated vivid colors, high contrast, a rich vibrant palette, and intense clean color separation. Avoid beige, cream, muted earth tones, dusty colors, desaturated or washed-out color, and soft pastel palettes unless the user explicitly requested them. Use crisp typography, clean edges, sharply defined illustrations or characters when appropriate, balanced spacing, and refined subject-relevant visual details. Keep every element legible and unobstructed. Make the result look like a premium, vibrant, professionally published, print-ready product. Add the exact small footer branding text "WishesWithoutBordersCo".`;
+  return `Create vivid, edge-to-edge background artwork for page ${pageIndex + 1} of ${totalPages}, based on this request: "${prompt}". Preserve the requested subject, audience, tone, and visual style. Use bold saturated vivid colors, high contrast, rich color separation, crisp clean edges, sharply defined subject-relevant illustrations, and premium print-ready detail. Keep the center calm enough for translucent text panels and place decorative artwork mainly around the edges and gaps. Do not render any visible words, letters, numbers, captions, labels, logos, signatures, or watermarks. Never depict a photographed paper, mockup, frame, or page on another background.`;
 }
 
 export function buildScriptoriumImageRequest(prompt: string) {
   return {
     model: SCRIPTORIUM_IMAGE_MODEL,
-    prompt: `${prompt}\n\nRENDER QUALITY REQUIREMENTS: ${SCRIPTORIUM_RENDER_QUALITY}. Render as one complete 8.5x11-inch portrait page, edge-to-edge. For full-color artwork, push color intensity hard: bold saturated vivid colors, high contrast, and a rich vibrant palette, never a muted beige, cream, earth-tone, dusty, desaturated, washed-out, or soft pastel treatment unless explicitly requested by the user.`,
+    prompt: `${prompt}\n\nRENDER QUALITY REQUIREMENTS: ${SCRIPTORIUM_RENDER_QUALITY}. Render as one complete 8.5x11-inch portrait background, edge-to-edge. Leave calm negative space beneath the intended translucent content panels. Do not render any visible words, letters, numbers, captions, labels, logos, signatures, or watermarks. For full-color artwork, push color intensity hard: bold saturated vivid colors, high contrast, and a rich vibrant palette, never a muted beige, cream, earth-tone, dusty, desaturated, washed-out, or soft pastel treatment unless explicitly requested by the user.`,
     n: 1,
     quality: "high" as const,
     background: "opaque" as const,
@@ -102,6 +98,7 @@ type PageType = "coloring-page" | "text-heavy";
 interface PageComposition {
   pageType: PageType;
   imagePrompt: string;
+  copy?: QuickCreatePageCopy;
 }
 
 export interface QuickCreateOptions {
@@ -184,14 +181,37 @@ async function generatePageComposition(
       response_format: {
         type: "json_schema",
         json_schema: {
-          name: "page_composition_prompt",
+          name: "page_composition",
           strict: true,
           schema: {
             type: "object",
             properties: {
-              imagePrompt: { type: "string" },
+              title: { type: "string" },
+              subtitle: { type: "string" },
+              sections: {
+                type: "array",
+                minItems: 1,
+                maxItems: 10,
+                items: {
+                  type: "object",
+                  properties: {
+                    heading: { type: "string" },
+                    body: { type: "string" },
+                  },
+                  required: ["heading", "body"],
+                  additionalProperties: false,
+                },
+              },
+              footerNote: { type: "string" },
+              artPrompt: { type: "string" },
             },
-            required: ["imagePrompt"],
+            required: [
+              "title",
+              "subtitle",
+              "sections",
+              "footerNote",
+              "artPrompt",
+            ],
             additionalProperties: false,
           },
         },
@@ -199,18 +219,53 @@ async function generatePageComposition(
     });
 
     const parsed = JSON.parse(extractLlmText(result)) as {
-      imagePrompt?: unknown;
+      title?: unknown;
+      subtitle?: unknown;
+      sections?: unknown;
+      footerNote?: unknown;
+      artPrompt?: unknown;
     };
-    const imagePrompt =
-      typeof parsed.imagePrompt === "string" ? parsed.imagePrompt.trim() : "";
+    const title = typeof parsed.title === "string" ? parsed.title.trim() : "";
+    const subtitle =
+      typeof parsed.subtitle === "string" ? parsed.subtitle.trim() : "";
+    const footerNote =
+      typeof parsed.footerNote === "string" ? parsed.footerNote.trim() : "";
+    const artPrompt =
+      typeof parsed.artPrompt === "string" ? parsed.artPrompt.trim() : "";
+    const sections = Array.isArray(parsed.sections)
+      ? parsed.sections
+          .map(section => {
+            if (!section || typeof section !== "object") return undefined;
+            const candidate = section as {
+              heading?: unknown;
+              body?: unknown;
+            };
+            const heading =
+              typeof candidate.heading === "string"
+                ? candidate.heading.trim()
+                : "";
+            const body =
+              typeof candidate.body === "string" ? candidate.body.trim() : "";
+            return heading || body ? { heading, body } : undefined;
+          })
+          .filter((section): section is { heading: string; body: string } =>
+            Boolean(section)
+          )
+          .slice(0, 10)
+      : [];
 
-    if (!imagePrompt) {
-      throw new Error("LLM returned an empty image composition prompt");
+    if (!title || !artPrompt || sections.length === 0) {
+      throw new Error("LLM returned incomplete structured page content");
     }
+
+    console.info(
+      `[Quick Create] Structured copy ready for page ${pageIndex + 1}: ${sections.length} sections; image model ${SCRIPTORIUM_IMAGE_MODEL}; deterministic SVG text renderer`
+    );
 
     return {
       pageType: "text-heavy",
-      imagePrompt,
+      imagePrompt: artPrompt,
+      copy: { title, subtitle, sections, footerNote },
     };
   } catch (error) {
     console.warn(
@@ -233,6 +288,17 @@ function buildFallbackComposition(
       pageIndex,
       totalPages,
     }),
+    copy: {
+      title: options.prompt.slice(0, 110),
+      subtitle: `Page ${pageIndex + 1} of ${totalPages}`,
+      sections: [
+        {
+          heading: "Requested Content",
+          body: options.prompt,
+        },
+      ],
+      footerNote: "",
+    },
   };
 }
 
@@ -304,14 +370,22 @@ async function generateColoringPage(imagePrompt: string): Promise<Buffer> {
     .toBuffer();
 }
 
-async function generateTextHeavyPage(imagePrompt: string): Promise<Buffer> {
-  const rawBuffer = await generateCompositionImage(imagePrompt);
+async function generateTextHeavyPage(
+  composition: PageComposition
+): Promise<Buffer> {
+  if (!composition.copy) {
+    throw new Error("Structured page copy is required for a text-heavy page");
+  }
+
+  const rawBuffer = await generateCompositionImage(composition.imagePrompt);
+  const textOverlay = buildQuickCreateTextOverlaySvg(composition.copy);
 
   return sharp(rawBuffer)
     .resize(PAGE_WIDTH, PAGE_HEIGHT, {
       fit: "fill",
       kernel: sharp.kernel.lanczos3,
     })
+    .composite([{ input: textOverlay, blend: "over" }])
     .png({ compressionLevel: 9 })
     .toBuffer();
 }
@@ -334,7 +408,7 @@ async function generateQuickCreatePage(
   const finalBuffer =
     composition.pageType === "coloring-page"
       ? await generateColoringPage(composition.imagePrompt)
-      : await generateTextHeavyPage(composition.imagePrompt);
+      : await generateTextHeavyPage(composition);
 
   const { url: imageUrl } = await storagePut(
     `pages/quick-create/${job.id}/page-${String(pageNumber).padStart(3, "0")}.png`,
@@ -346,7 +420,13 @@ async function generateQuickCreatePage(
     pageNumber,
     imageUrl,
     status: "success",
-    metadata: { pageType: composition.pageType },
+    metadata: {
+      pageType: composition.pageType,
+      imageModel: SCRIPTORIUM_IMAGE_MODEL,
+      textRenderer:
+        composition.pageType === "text-heavy" ? "sharp-svg-overlay" : "none",
+      sectionCount: composition.copy?.sections.length ?? 0,
+    },
   };
 }
 
