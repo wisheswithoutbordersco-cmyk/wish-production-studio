@@ -1,4 +1,5 @@
 import sharp from "sharp";
+import { ENV } from "../_core/env";
 import { generateImage } from "../_core/imageGeneration";
 import { invokeLLM } from "../_core/llm";
 import {
@@ -19,53 +20,42 @@ export interface ScriptoriumPageContext {
   totalPages: number;
 }
 
-export interface ScriptoriumPageSection {
-  heading: string;
-  body: string;
-}
-
-export interface ScriptoriumPagePlan {
-  title: string;
-  subtitle: string;
-  sections: ScriptoriumPageSection[];
-  footerNote: string;
-  imagePrompt: string;
-}
-
-export const SCRIPTORIUM_IMAGE_MODEL = "fal-ai/flux-pro/v1.1-ultra";
-export const SCRIPTORIUM_CONTENT_MODEL = "openai/gpt-4o";
-export const SCRIPTORIUM_WATERMARK = "WishesWithoutBordersCo";
+export const SCRIPTORIUM_IMAGE_MODEL = "openai/gpt-image-2";
 
 export const SCRIPTORIUM_RENDER_QUALITY =
-  "premium professional publishing quality, bold saturated vivid colors, high contrast, a rich vibrant palette, intense clean color separation, crisp clean edges, sharply defined characters and illustrations, refined textures, accurate anatomy, strong typographic hierarchy, excellent legibility, artifact-free, polished, detailed, and print-ready; avoid beige, cream, muted earth tones, dusty colors, desaturated color, washed-out color, and soft pastel palettes unless the user explicitly requests them";
+  "premium professional publishing quality, bold saturated vivid colors, high contrast, a rich vibrant palette, intense clean color separation, crisp clean edges, sharply defined characters and illustrations, refined textures, precise typography, excellent legibility, artifact-free, polished, detailed, and print-ready; avoid beige, cream, muted earth tones, dusty colors, desaturated color, washed-out color, and soft pastel palettes unless the user explicitly requests them";
 
-export const SCRIPTORIUM_SYSTEM_PROMPT = `You are an expert publishing content designer, factual editor, and art director creating professional illustrated posters, infographics, greeting cards, guides, activity pages, worksheets, journals, planners, trackers, and other printable page-based products.
+export const SCRIPTORIUM_SYSTEM_PROMPT = `You are an expert publishing art director and product designer creating prompts for AI image generation of professional printable books, workbooks, journals, planners, trackers, guides, activity products, and other page-based publications.
 
-The USER REQUEST is authoritative. Infer the product type, purpose, structure, tone, audience, complexity, visual theme, and use solely from the user's words. Never turn a request into a school worksheet, lesson, quiz, math exercise, classroom activity, or answer-blank page unless the user explicitly asks for that format.
+CORE INTENT RULE:
+- The USER REQUEST is authoritative. First infer the exact product type, purpose, structure, tone, intended audience, complexity, and use solely from the user\'s words, then design that product.
+- Never turn a request into a school worksheet, lesson, quiz, math exercise, classroom activity, or answer-blank page unless the user explicitly asks for an educational or practice-based product.
+- Recipe books must contain recipes and appropriate recipe-page structure. Creative-writing workbooks must support writing craft and exercises. Fitness trackers must contain fitness plans, logs, metrics, and reflection fields. Journals, planners, games, storybooks, reference guides, and other products must use the conventions appropriate to their requested form.
+- If the user says adult, child, kid, teen, beginner, advanced, or provides another audience cue, follow that cue. If no audience is stated, infer the best fit from the requested product and content. Do not invent a classroom context.
 
-Plan ONE complete 8.5x11-inch portrait page that will be rendered by Flux Pro Ultra as a single finished, flattened, full-bleed image. Every visible title, subtitle, heading, fact, description, label, instruction, message, and footer must be part of the AI image-generation prompt and rendered directly inside the illustration. There is no later text overlay step.
+Given the user\'s request, create a detailed image-generation prompt for ONE COMPLETE full-page design. Include only the content and page elements that genuinely belong in the requested product, such as:
+- An appropriate page title, subtitle, or section heading with exact text where useful
+- The exact body copy, instructions, prompts, fields, labels, recipes, schedules, stories, lists, or activities needed for that specific page
+- A coordinated visual theme, palette, typography, illustration style, and decorative treatment that matches the request
+- A clear layout describing how every necessary section and content item is arranged
+- Purposeful illustrations, characters, icons, charts, or decorative elements when they support the product
+- Footer branding with the exact text \"WishesWithoutBordersCo\"
 
-CONTENT RULES:
-- Write a concise, compelling page title and an optional subtitle.
-- Provide 1 to 10 content sections appropriate to the requested product. Each section needs a short heading and concise, publication-ready body copy.
-- For fact, reference, educational, or infographic requests, provide accurate substantive information, never placeholders.
-- Preserve every exact title, phrase, name, count, fact, message, language, or footer wording requested by the user.
-- For multi-page products, make this page substantively unique while preserving a coherent product-wide visual system.
-- Keep visible copy concise enough for excellent legibility inside a single illustrated poster.
-- Put any user-requested footer phrase in footerNote. The exact watermark "WishesWithoutBordersCo" is mandatory on every page and is handled separately.
+RULES:
+- Describe ONE complete, flat, full-page image at 8.5x11 inches in portrait orientation
+- Fill the entire canvas edge-to-edge; never depict a photographed sheet, mockup, framed object, or page placed on another background
+- Follow the user\'s requested format and content literally; do not inject generic educational material or unrelated school exercises
+- Include an amount of content appropriate to the page\'s purpose. Do not force a fixed number of questions, blanks, panels, or activities
+- Include all required text verbatim in the image prompt, with correct spelling and factual accuracy
+- Describe specific colors, font styles, text hierarchy, spacing, panels, shapes, icons, and illustrations appropriate to the requested aesthetic
+- Prioritize legibility with strong contrast, generous spacing, clean grouping, and no overlap between text and decorative elements
+- For every full-color page, explicitly demand bold saturated vivid colors, high contrast, and a rich vibrant palette with intense clean color separation. Reject beige, cream, muted earth tones, dusty colors, desaturated or washed-out color, and soft pastel palettes unless the user explicitly requests one of those looks
+- Use premium publishing aesthetics with crisp clean edges, sharply defined characters and illustrations, refined detail, and polished print-ready composition
+- Keep each page visually and substantively unique while maintaining a coherent product-wide style
+- Always include \"WishesWithoutBordersCo\" as small, legible footer branding text
+- Do not mention post-production, overlays, editable layers, or adding text later; the generated image itself must be the complete finished page
 
-IMAGE-PROMPT RULES:
-- imagePrompt must describe ONE complete, flat, full-bleed illustrated poster with all text baked directly into the artwork by Flux Pro Ultra.
-- State the exact visible words that must appear, with their placement, hierarchy, font treatment, size, color, and surrounding illustration.
-- Describe the layout concretely: title zone, focal illustration, cards/panels/labels, supporting decorations, safe margins, and bottom watermark area.
-- Match the layout to the product: infographic cards for lists and facts, a dominant scene plus message for greeting posters, clear activity areas for explicitly requested worksheets, and so on.
-- Demand bold saturated vivid color, high contrast, rich clean color separation, dramatic subject-relevant illustration, crisp edges, refined detail, and premium print-ready poster quality.
-- Fill the canvas edge-to-edge. Never depict a photographed sheet, mockup, loose paper, poster frame, book spread, device screen, or page sitting on another background.
-- Never request a text-free background, empty text panels, placeholder copy, post-production, compositing, SVG, Sharp, editable layers, or adding text later.
-- Do not add a page number unless the user explicitly requests one.
-- Include the exact small watermark text "WishesWithoutBordersCo" in the bottom area.
-
-Return strict JSON with title, subtitle, sections, footerNote, and imagePrompt. The imagePrompt must already describe the finished page, but structured copy is also returned so the server can append an exact mandatory text manifest before sending the prompt to Flux.`;
+Return JSON only with this shape: {\"imagePrompt\":\"the complete image-generation prompt\"}.`;
 
 export function buildScriptoriumUserPrompt({
   prompt,
@@ -75,44 +65,10 @@ export function buildScriptoriumUserPrompt({
   return `USER REQUEST:
 ${prompt}
 
-PAGE TO DESIGN:
+PAGE:
 ${pageIndex + 1} of ${totalPages}
 
-Create the final copy, concrete poster layout, illustration direction, color system, typography treatment, and complete Flux Pro Ultra image prompt for this page. Make this page visually distinctive from the other pages while keeping the collection coherent. The entire printable page must be one AI-generated image with all visible wording rendered directly inside it. Include the exact watermark text "${SCRIPTORIUM_WATERMARK}" at the bottom.`;
-}
-
-function normalizeManifestText(text: string): string {
-  return text.replace(/\s+/g, " ").trim().replace(/"/g, "'");
-}
-
-export function buildScriptoriumBakedTextPrompt(
-  plan: ScriptoriumPagePlan,
-  context: ScriptoriumPageContext
-): string {
-  const manifest = [
-    `TITLE: "${normalizeManifestText(plan.title)}"`,
-    plan.subtitle
-      ? `SUBTITLE: "${normalizeManifestText(plan.subtitle)}"`
-      : "",
-    ...plan.sections.flatMap((section, index) => [
-      `SECTION ${index + 1} HEADING: "${normalizeManifestText(section.heading)}"`,
-      `SECTION ${index + 1} BODY: "${normalizeManifestText(section.body)}"`,
-    ]),
-    plan.footerNote
-      ? `FOOTER NOTE: "${normalizeManifestText(plan.footerNote)}"`
-      : "",
-    `WATERMARK: "${SCRIPTORIUM_WATERMARK}"`,
-  ]
-    .filter(Boolean)
-    .join("\n");
-
-  return `${plan.imagePrompt.trim()}
-
-MANDATORY EXACT VISIBLE TEXT MANIFEST:
-${manifest}
-
-FINAL RENDERING DIRECTIVE:
-Create page ${context.pageIndex + 1} of ${context.totalPages} as ONE complete, finished, flattened, edge-to-edge 8.5x11-inch portrait illustration. Render every line in the mandatory text manifest directly inside the artwork with correct spelling, clear hierarchy, strong contrast, generous spacing, and no overlap. The title must be a dominant designed element, the section copy must be integrated into illustrated cards, banners, labels, or panels appropriate to the user's requested product, and the exact watermark "${SCRIPTORIUM_WATERMARK}" must appear small but readable in the bottom area. The entire page is the artwork. Do not leave blank text boxes, placeholder text, gibberish filler, or space for later overlays. Do not show a mockup, framed poster, sheet of paper, book, device, or surrounding scene.`;
+The user request above is the sole source of product type, audience, complexity, tone, and purpose. Create the complete image composition prompt for this page. Ensure its content and visual treatment are unique to this page while remaining consistent with the requested product. For a full-color page, require bold saturated vivid colors, high contrast, and a rich vibrant palette; explicitly avoid beige, cream, muted earth tones, dusty, desaturated, washed-out, and soft pastel color treatments unless the user requested them.`;
 }
 
 export function buildScriptoriumFallbackPrompt({
@@ -120,18 +76,16 @@ export function buildScriptoriumFallbackPrompt({
   pageIndex,
   totalPages,
 }: ScriptoriumPageContext): string {
-  const exactRequest = normalizeManifestText(prompt).slice(0, 1500);
-  const fallbackTitle =
-    exactRequest.length <= 90 ? exactRequest : `Illustrated Guide — Page ${pageIndex + 1}`;
-
-  return `Create ONE complete, flat, full-bleed professional illustrated poster based exactly on this user request: "${exactRequest}". This is design ${pageIndex + 1} in a coherent ${totalPages}-page collection. Use a concrete, subject-appropriate composition with a large bold title at the top reading exactly "${fallbackTitle}", a dramatic central illustration, and polished illustrated cards, labels, banners, or message panels that express the requested content. If the request contains facts, names, messages, labels, or instructions, render those exact words directly inside the artwork. Use bold saturated vivid colors, high contrast, rich clean color separation, crisp edges, premium typography, refined details, and professional infographic-poster quality. Fill the portrait canvas edge-to-edge. At the bottom, include the exact small readable watermark text "${SCRIPTORIUM_WATERMARK}". The entire page must be one finished flattened image with all wording baked into the design. Do not create a text-free background, empty panels, placeholder copy, a photographed sheet, a mockup, a frame, or a page on another background.`;
+  return `Create ONE complete, flat, full-page professional publication page based exactly on this request: \"${prompt}\". Infer the product type, audience, complexity, tone, and purpose solely from the user\'s words. This is page ${pageIndex + 1} of ${totalPages}. Preserve the requested product type and use the structure, content, fields, copy, and page conventions that genuinely belong to it. Do not turn the request into a school worksheet, quiz, lesson, math exercise, or answer-blank activity unless the user explicitly requested that format. Use an 8.5x11-inch portrait composition filling the entire canvas edge-to-edge, never a photographed paper, mockup, frame, or page on a background. Render all necessary page text directly in the image with correct spelling and a polished font hierarchy. For a full-color page, use bold saturated vivid colors, high contrast, a rich vibrant palette, and intense clean color separation. Avoid beige, cream, muted earth tones, dusty colors, desaturated or washed-out color, and soft pastel palettes unless the user explicitly requested them. Use crisp typography, clean edges, sharply defined illustrations or characters when appropriate, balanced spacing, and refined subject-relevant visual details. Make the result look like a premium, vibrant, professionally published, print-ready product. Add the exact small footer branding text \"WishesWithoutBordersCo\".`;
 }
 
 export function buildScriptoriumImageRequest(prompt: string) {
   return {
     model: SCRIPTORIUM_IMAGE_MODEL,
-    prompt: `${prompt.trim()}\n\nRENDER QUALITY REQUIREMENTS: ${SCRIPTORIUM_RENDER_QUALITY}. Render one complete 8.5x11-inch portrait poster, edge-to-edge, with all requested title text, headings, descriptions, labels, messages, and the exact watermark "${SCRIPTORIUM_WATERMARK}" baked directly into the illustration. Typography must be an intentional part of the visual composition, not an empty area reserved for later.`,
-    aspectRatio: "3:4" as const,
+    prompt: `${prompt}\n\nRENDER QUALITY REQUIREMENTS: ${SCRIPTORIUM_RENDER_QUALITY}. Render as one complete 8.5x11-inch portrait page, edge-to-edge. For full-color artwork, push color intensity hard: bold saturated vivid colors, high contrast, and a rich vibrant palette, never a muted beige, cream, earth-tone, dusty, desaturated, washed-out, or soft pastel treatment unless explicitly requested by the user.`,
+    n: 1,
+    quality: "high" as const,
+    background: "opaque" as const,
   };
 }
 
@@ -139,15 +93,18 @@ const PAGES_PER_CHUNK = 1;
 const PAGE_WIDTH = 2550;
 const PAGE_HEIGHT = 3300;
 const MAX_PAGE_COUNT = 30;
+const IMAGE_GENERATION_ATTEMPTS = 3;
+
 const COLORING_NEGATIVE_PROMPT =
   "no text, no words, no letters, no numbers, no writing, no captions, no labels, no watermark, no signature, no blur, no distortion, no artifacts";
 
-type PageType = "coloring-page" | "complete-poster";
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+type PageType = "coloring-page" | "text-heavy";
 
 interface PageComposition {
   pageType: PageType;
   imagePrompt: string;
-  copy?: ScriptoriumPagePlan;
 }
 
 export interface QuickCreateOptions {
@@ -160,6 +117,14 @@ interface NormalizedOptions {
   prompt: string;
   pageCount: number;
 }
+
+interface ImageApiResponse {
+  data?: Array<{
+    b64_json?: string;
+  }>;
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function normalizeOptions(options: QuickCreateOptions): NormalizedOptions {
   const prompt = (options.prompt || options.customPrompt || "").trim();
@@ -198,6 +163,12 @@ function isColoringRequest(prompt: string): boolean {
   );
 }
 
+function wait(milliseconds: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+
+// ─── Composition Prompt Generation (LLM) ─────────────────────────────────────
+
 async function generatePageComposition(
   options: NormalizedOptions,
   pageIndex: number,
@@ -206,58 +177,34 @@ async function generatePageComposition(
   if (isColoringRequest(options.prompt)) {
     return {
       pageType: "coloring-page",
-      imagePrompt: `Create a black-and-white line-art coloring page based exactly on this request: ${options.prompt}. Infer the intended audience, maturity, complexity, detail, and visual sophistication solely from the user's words. Use thick, clean, crisp outlines, no shading, no color, and no background clutter. Center the unique scene on the page with strong contrast and professional vector-like edges. This is page ${pageIndex + 1} of ${totalPages}.`,
+      imagePrompt: `Create a black-and-white line-art coloring page based exactly on this request: ${options.prompt}. Infer the intended audience, maturity, complexity, detail, and visual sophistication solely from the user\'s words. Use thick, clean, crisp outlines, no shading, no color, and no background clutter. Center the unique scene on the page with strong contrast and professional vector-like edges. This is page ${pageIndex + 1} of ${totalPages}.`,
     };
   }
 
-  const context = {
+  const systemPrompt = SCRIPTORIUM_SYSTEM_PROMPT;
+  const userPrompt = buildScriptoriumUserPrompt({
     prompt: options.prompt,
     pageIndex,
     totalPages,
-  };
+  });
 
   try {
     const result = await invokeLLM({
-      model: SCRIPTORIUM_CONTENT_MODEL,
-      maxTokens: 4500,
       messages: [
-        { role: "system", content: SCRIPTORIUM_SYSTEM_PROMPT },
-        { role: "user", content: buildScriptoriumUserPrompt(context) },
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
       ],
       response_format: {
         type: "json_schema",
         json_schema: {
-          name: "scriptorium_complete_page_plan",
+          name: "page_composition_prompt",
           strict: true,
           schema: {
             type: "object",
             properties: {
-              title: { type: "string" },
-              subtitle: { type: "string" },
-              sections: {
-                type: "array",
-                minItems: 1,
-                maxItems: 10,
-                items: {
-                  type: "object",
-                  properties: {
-                    heading: { type: "string" },
-                    body: { type: "string" },
-                  },
-                  required: ["heading", "body"],
-                  additionalProperties: false,
-                },
-              },
-              footerNote: { type: "string" },
               imagePrompt: { type: "string" },
             },
-            required: [
-              "title",
-              "subtitle",
-              "sections",
-              "footerNote",
-              "imagePrompt",
-            ],
+            required: ["imagePrompt"],
             additionalProperties: false,
           },
         },
@@ -265,100 +212,121 @@ async function generatePageComposition(
     });
 
     const parsed = JSON.parse(extractLlmText(result)) as {
-      title?: unknown;
-      subtitle?: unknown;
-      sections?: unknown;
-      footerNote?: unknown;
       imagePrompt?: unknown;
     };
-    const title = typeof parsed.title === "string" ? parsed.title.trim() : "";
-    const subtitle =
-      typeof parsed.subtitle === "string" ? parsed.subtitle.trim() : "";
-    const footerNote =
-      typeof parsed.footerNote === "string" ? parsed.footerNote.trim() : "";
     const imagePrompt =
       typeof parsed.imagePrompt === "string" ? parsed.imagePrompt.trim() : "";
-    const sections = Array.isArray(parsed.sections)
-      ? parsed.sections
-          .map(section => {
-            if (!section || typeof section !== "object") return undefined;
-            const candidate = section as {
-              heading?: unknown;
-              body?: unknown;
-            };
-            const heading =
-              typeof candidate.heading === "string"
-                ? candidate.heading.trim()
-                : "";
-            const body =
-              typeof candidate.body === "string" ? candidate.body.trim() : "";
-            return heading || body ? { heading, body } : undefined;
-          })
-          .filter((section): section is ScriptoriumPageSection =>
-            Boolean(section)
-          )
-          .slice(0, 10)
-      : [];
 
-    if (!title || !imagePrompt || sections.length === 0) {
-      throw new Error("GPT-4o returned an incomplete complete-page plan");
+    if (!imagePrompt) {
+      throw new Error("LLM returned an empty image composition prompt");
     }
 
-    const plan: ScriptoriumPagePlan = {
-      title,
-      subtitle,
-      sections,
-      footerNote,
-      imagePrompt,
-    };
-
-    console.info(
-      `[Quick Create] Complete poster prompt ready for page ${pageIndex + 1}: ${sections.length} sections; content model ${SCRIPTORIUM_CONTENT_MODEL}; image model ${SCRIPTORIUM_IMAGE_MODEL}; text rendered by Flux`
-    );
-
     return {
-      pageType: "complete-poster",
-      imagePrompt: buildScriptoriumBakedTextPrompt(plan, context),
-      copy: plan,
+      pageType: "text-heavy",
+      imagePrompt,
     };
   } catch (error) {
     console.warn(
-      `Complete poster prompt generation failed for page ${pageIndex + 1}; using direct full-page fallback:`,
+      `Composition prompt generation failed for page ${pageIndex + 1}, using fallback:`,
       error
     );
-    return {
-      pageType: "complete-poster",
-      imagePrompt: buildScriptoriumFallbackPrompt(context),
-    };
+    return buildFallbackComposition(options, pageIndex, totalPages);
   }
 }
 
-async function downloadGeneratedImage(prompt: string): Promise<Buffer> {
-  const request = buildScriptoriumImageRequest(prompt);
-  const { url } = await generateImage({
-    prompt: request.prompt,
-    aspectRatio: request.aspectRatio,
-  });
+function buildFallbackComposition(
+  options: NormalizedOptions,
+  pageIndex: number,
+  totalPages: number
+): PageComposition {
+  return {
+    pageType: "text-heavy",
+    imagePrompt: buildScriptoriumFallbackPrompt({
+      prompt: options.prompt,
+      pageIndex,
+      totalPages,
+    }),
+  };
+}
 
-  if (!url) {
-    throw new Error("fal.ai returned no composition image URL");
+// ─── Image Generation ─────────────────────────────────────────────────────────
+
+async function generateCompositionImage(prompt: string): Promise<Buffer> {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= IMAGE_GENERATION_ATTEMPTS; attempt++) {
+    try {
+      const response = await fetch("https://api.openai.com/v1/images/generations", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${ENV.openaiApiKey}`,
+        },
+        body: JSON.stringify({
+          model: "gpt-image-2",
+          prompt: prompt,
+          n: 1,
+          quality: "high",
+          size: "1024x1536",
+        }),
+      });
+
+      if (!response.ok) {
+        const detail = await response.text().catch(() => "");
+        throw new Error(
+          `Image generation failed (${response.status}): ${detail}`
+        );
+      }
+
+      const result = (await response.json()) as ImageApiResponse;
+      const b64 = result.data?.[0]?.b64_json;
+      if (!b64) throw new Error("No image data in response");
+
+      return Buffer.from(b64, "base64");
+    } catch (error) {
+      lastError = error;
+      if (attempt === IMAGE_GENERATION_ATTEMPTS) break;
+
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `Composition image attempt ${attempt} of ${IMAGE_GENERATION_ATTEMPTS} failed: ${message}`
+      );
+      await wait(1000 * 2 ** (attempt - 1));
+    }
   }
 
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(
-      `Failed to download fal.ai composition image (${response.status})`
-    );
-  }
-
-  return Buffer.from(await response.arrayBuffer());
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Image generation failed after 3 attempts");
 }
 
 async function generateColoringPage(imagePrompt: string): Promise<Buffer> {
   const coloringPrompt = `${imagePrompt}. Style requirements: pure black-and-white line art coloring page, thick clean outlines only, no shading, no gray tones, no color fills, no background textures, high-contrast black lines on a pure white background, exceptionally crisp vector-like edges, sharply defined subjects, premium professional coloring-book quality suitable for high-resolution printing. Negative requirements: ${COLORING_NEGATIVE_PROMPT}.`;
 
-  const rawBuffer = await downloadGeneratedImage(coloringPrompt);
+  let rawBuffer: Buffer;
+  try {
+    const { url } = await generateImage({
+      prompt: coloringPrompt,
+      aspectRatio: "3:4",
+    });
+    if (!url) throw new Error("fal.ai returned no coloring-page image URL");
 
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(
+        `Failed to download fal.ai coloring page (${response.status})`
+      );
+    }
+    rawBuffer = Buffer.from(await response.arrayBuffer());
+  } catch (error) {
+    console.warn(
+      "fal.ai coloring-page generation failed; using the high-quality OpenRouter fallback:",
+      error
+    );
+    rawBuffer = await generateCompositionImage(coloringPrompt);
+  }
+
+  // Post-process to ensure clean B&W output
   const cleaned = await sharp(rawBuffer)
     .flatten({ background: "#ffffff" })
     .grayscale()
@@ -367,6 +335,7 @@ async function generateColoringPage(imagePrompt: string): Promise<Buffer> {
     .png()
     .toBuffer();
 
+  // Resize to print dimensions
   return sharp(cleaned)
     .resize(PAGE_WIDTH, PAGE_HEIGHT, {
       fit: "fill",
@@ -376,11 +345,9 @@ async function generateColoringPage(imagePrompt: string): Promise<Buffer> {
     .toBuffer();
 }
 
-async function generateCompletePoster(imagePrompt: string): Promise<Buffer> {
-  const rawBuffer = await downloadGeneratedImage(imagePrompt);
+async function generateTextHeavyPage(imagePrompt: string): Promise<Buffer> {
+  const rawBuffer = await generateCompositionImage(imagePrompt);
 
-  // Sharp is used only to normalize the single AI-generated page to print size.
-  // No SVG, text, branding, or other visual layer is composited here.
   return sharp(rawBuffer)
     .resize(PAGE_WIDTH, PAGE_HEIGHT, {
       fit: "fill",
@@ -389,6 +356,8 @@ async function generateCompletePoster(imagePrompt: string): Promise<Buffer> {
     .png({ compressionLevel: 9 })
     .toBuffer();
 }
+
+// ─── Page Generation ─────────────────────────────────────────────────────────
 
 async function generateQuickCreatePage(
   pageIndex: number,
@@ -406,7 +375,7 @@ async function generateQuickCreatePage(
   const finalBuffer =
     composition.pageType === "coloring-page"
       ? await generateColoringPage(composition.imagePrompt)
-      : await generateCompletePoster(composition.imagePrompt);
+      : await generateTextHeavyPage(composition.imagePrompt);
 
   const { url: imageUrl } = await storagePut(
     `pages/quick-create/${job.id}/page-${String(pageNumber).padStart(3, "0")}.png`,
@@ -418,21 +387,11 @@ async function generateQuickCreatePage(
     pageNumber,
     imageUrl,
     status: "success",
-    metadata: {
-      pageType: composition.pageType,
-      contentModel:
-        composition.pageType === "complete-poster"
-          ? SCRIPTORIUM_CONTENT_MODEL
-          : "not-required",
-      imageModel: SCRIPTORIUM_IMAGE_MODEL,
-      textRenderer:
-        composition.pageType === "complete-poster"
-          ? "flux-pro-ultra-baked-in"
-          : "none",
-      sectionCount: composition.copy?.sections.length ?? 0,
-    },
+    metadata: { pageType: composition.pageType },
   };
 }
+
+// ─── Chunk Processing & Job Creation ─────────────────────────────────────────
 
 async function processQuickCreateChunkInternal(
   job: GenerationJob
@@ -442,7 +401,7 @@ async function processQuickCreateChunkInternal(
 
   updateJob(job.id, {
     status: "generating",
-    statusMessage: `Generating complete AI poster page ${startIndex + 1} of ${job.totalPages}...`,
+    statusMessage: `Generating page ${startIndex + 1} of ${job.totalPages}...`,
   });
 
   for (let pageIndex = startIndex; pageIndex < endIndex; pageIndex++) {
@@ -451,7 +410,7 @@ async function processQuickCreateChunkInternal(
       addPageResult(job.id, result);
       updateJob(job.id, {
         nextPageIndex: pageIndex + 1,
-        statusMessage: `Generated complete poster page ${pageIndex + 1} of ${job.totalPages}`,
+        statusMessage: `Generated page ${pageIndex + 1} of ${job.totalPages}`,
       });
     } catch (error) {
       const errorMessage =
@@ -472,7 +431,7 @@ async function processQuickCreateChunkInternal(
 
   const updatedJob = getJob(job.id);
   if (updatedJob && updatedJob.nextPageIndex >= updatedJob.totalPages) {
-    await finalizePdf(updatedJob, { addPdfBranding: false });
+    await finalizePdf(updatedJob);
   }
 }
 
