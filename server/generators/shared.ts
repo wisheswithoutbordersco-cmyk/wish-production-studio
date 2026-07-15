@@ -656,7 +656,10 @@ export async function processChunk(
 /**
  * Assemble final PDF from all generated page images and upload to storage.
  */
-export async function finalizePdf(job: GenerationJob): Promise<void> {
+export async function finalizePdf(
+  job: GenerationJob,
+  options: { addPdfBranding?: boolean } = {}
+): Promise<void> {
   updateJob(job.id, { statusMessage: "Assembling PDF..." });
 
   const successPages = job.pageResults.filter(r => r.status === "success");
@@ -676,7 +679,10 @@ export async function finalizePdf(job: GenerationJob): Promise<void> {
     const pageContents: PageContent[] = [];
     for (const page of successPages) {
       const buffer = await fetchImageBuffer(page.imageUrl);
-      pageContents.push({ imageBuffer: buffer });
+      pageContents.push({
+        imageBuffer: buffer,
+        addBranding: options.addPdfBranding !== false,
+      });
     }
 
     const pdfBuffer = await assemblePdf(pageContents);
