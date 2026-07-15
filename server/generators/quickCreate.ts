@@ -1,5 +1,4 @@
 import sharp from "sharp";
-import { ENV } from "../_core/env";
 import { generateImage } from "../_core/imageGeneration";
 import { invokeLLM } from "../_core/llm";
 import {
@@ -93,8 +92,6 @@ const PAGES_PER_CHUNK = 1;
 const PAGE_WIDTH = 2550;
 const PAGE_HEIGHT = 3300;
 const MAX_PAGE_COUNT = 30;
-const IMAGE_GENERATION_ATTEMPTS = 3;
-
 const COLORING_NEGATIVE_PROMPT =
   "no text, no words, no letters, no numbers, no writing, no captions, no labels, no watermark, no signature, no blur, no distortion, no artifacts";
 
@@ -116,12 +113,6 @@ export interface QuickCreateOptions {
 interface NormalizedOptions {
   prompt: string;
   pageCount: number;
-}
-
-interface ImageApiResponse {
-  data?: Array<{
-    b64_json?: string;
-  }>;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -161,10 +152,6 @@ function isColoringRequest(prompt: string): boolean {
   return /\b(?:coloring|colouring|line art|colour-in|color-in|coloring book|coloring page)\b/i.test(
     prompt
   );
-}
-
-function wait(milliseconds: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, milliseconds));
 }
 
 // ─── Composition Prompt Generation (LLM) ─────────────────────────────────────
@@ -252,46 +239,24 @@ function buildFallbackComposition(
 // ─── Image Generation ─────────────────────────────────────────────────────────
 
 async function generateCompositionImage(prompt: string): Promise<Buffer> {
-  let lastError: unknown;
+  const request = buildScriptoriumImageRequest(prompt);
+  const { url } = await generateImage({
+    prompt: request.prompt,
+    aspectRatio: "3:4",
+  });
 
-  for (let attempt = 1; attempt <= IMAGE_GENERATION_ATTEMPTS; attempt++) {
-    try {
-      const response = await fetch("https://openrouter.ai/api/v1/images", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${ENV.openRouterApiKey}`,
-        },
-        body: JSON.stringify(buildScriptoriumImageRequest(prompt)),
-      });
-
-      if (!response.ok) {
-        const detail = await response.text().catch(() => "");
-        throw new Error(
-          `Image generation failed (${response.status}): ${detail}`
-        );
-      }
-
-      const result = (await response.json()) as ImageApiResponse;
-      const b64 = result.data?.[0]?.b64_json;
-      if (!b64) throw new Error("No image data in response");
-
-      return Buffer.from(b64, "base64");
-    } catch (error) {
-      lastError = error;
-      if (attempt === IMAGE_GENERATION_ATTEMPTS) break;
-
-      const message = error instanceof Error ? error.message : String(error);
-      console.warn(
-        `Composition image attempt ${attempt} of ${IMAGE_GENERATION_ATTEMPTS} failed: ${message}`
-      );
-      await wait(1000 * 2 ** (attempt - 1));
-    }
+  if (!url) {
+    throw new Error("fal.ai returned no composition image URL");
   }
 
-  throw lastError instanceof Error
-    ? lastError
-    : new Error("Image generation failed after 3 attempts");
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(
+      `Failed to download fal.ai composition image (${response.status})`
+    );
+  }
+
+  return Buffer.from(await response.arrayBuffer());
 }
 
 async function generateColoringPage(imagePrompt: string): Promise<Buffer> {
@@ -314,7 +279,7 @@ async function generateColoringPage(imagePrompt: string): Promise<Buffer> {
     rawBuffer = Buffer.from(await response.arrayBuffer());
   } catch (error) {
     console.warn(
-      "fal.ai coloring-page generation failed; using the high-quality OpenRouter fallback:",
+      "fal.ai coloring-page generation failed; retrying through the shared Flux Pro Ultra composition path:",
       error
     );
     rawBuffer = await generateCompositionImage(coloringPrompt);
