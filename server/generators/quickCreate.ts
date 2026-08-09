@@ -635,7 +635,7 @@ async function processQuickCreateChunkInternal(
     const opts = updatedJob.options as unknown as NormalizedOptions;
     await saveJobMetadata(updatedJob, opts, updatedJob.filename);
     await finalizePdf(updatedJob, {
-      brandingText: opts.branding === "none" ? "off" : opts.branding,
+      addPdfBranding: opts.branding !== "none",
       showPageNumbers: opts.showPageNumbers,
     });
   }
