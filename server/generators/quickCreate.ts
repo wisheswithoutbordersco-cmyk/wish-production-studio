@@ -66,8 +66,8 @@ export function getScriptoriumSystemPrompt(branding: BrandingOption): string {
   let brandingLine2: string;
 
   if (branding === "none") {
-    brandingLine1 = "\n- This image must have NO footer text, NO watermark, NO branding, NO company name, and NO words at the bottom. Leave the bottom area completely clean and empty";
-    brandingLine2 = "\n- CRITICAL: Do NOT write any text, word, name, label, or watermark at the bottom of the image. The bottom must be completely blank and clean";
+    brandingLine1 = "";
+    brandingLine2 = "";
   } else {
     brandingLine1 = `\n- Footer branding with the exact text "${branding}"`;
     brandingLine2 = `\n- Always include "${branding}" as small, legible footer branding text`;
@@ -129,7 +129,7 @@ export function buildScriptoriumFallbackPrompt({
 }: ScriptoriumPageContext): string {
   let brandingSuffix: string;
   if (branding === "none") {
-    brandingSuffix = " CRITICAL: This image must have NO footer text, NO watermark, NO branding, NO company name, and NO words at the bottom of the image. Leave the bottom area completely clean and empty. Do NOT write any text there.";
+    brandingSuffix = "";
   } else {
     brandingSuffix = ` Add the exact small footer branding text "${branding}".`;
   }
