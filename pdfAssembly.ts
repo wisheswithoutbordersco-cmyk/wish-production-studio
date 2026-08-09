@@ -1,0 +1,393 @@
+/**
+ * PDF Assembly utility for creating print-ready PDFs.
+ * Supports both programmatically typeset products and raw full-page image
+ * products whose typography and branding are already baked into the artwork.
+ *
+ * Output: 8.5x11 inches (612x792 points at 72 DPI)
+ */
+import PDFDocument from "pdfkit";
+import sharp from "sharp";
+
+const PAGE_WIDTH = 612;  // 8.5 inches at 72 DPI
+const PAGE_HEIGHT = 792; // 11 inches at 72 DPI
+const MARGIN = 36;       // 0.5 inch margins
+
+export interface PageContent {
+  imageBuffer?: Buffer;
+  // When set, the page image is confined to the top of the page at this height.
+  // The remaining area is rendered as solid white for text content.
+  imageHeight?: number;
+  imageUrl?: string;
+  title?: string;
+  subtitle?: string;
+  instructions?: string[];
+  labels?: Array<{ text: string; x: number; y: number; fontSize?: number }>;
+  pageNumber?: number;
+  totalPages?: number;
+  // For card layouts (multiple cards per page)
+  cards?: Array<{
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    imageBuffer?: Buffer;
+    frontText?: string;
+    backText?: string;
+    topText?: string;
+    bottomText?: string;
+    fontSize?: number;
+  }>;
+  // Custom content blocks
+  contentBlocks?: Array<{
+    text: string;
+    x: number;
+    y: number;
+    width?: number;
+    height?: number;
+    fontSize?: number;
+    font?: string;
+    align?: "left" | "center" | "right";
+    color?: string;
+    // Readability panel: when set, a filled rectangle is drawn behind the text.
+    // Accepts hex (#ffffff) or rgba() (e.g. "rgba(255,255,255,0.9)").
+    backgroundColor?: string;
+    // Alias for color (font color). `color` still works.
+    fontColor?: string;
+    // Internal padding between the panel edges and the text.
+    padding?: number;
+    // Optional corner radius for the panel.
+    radius?: number;
+  }>;
+  // Whether to show cut lines (for cards/flashcards)
+  showCutLines?: boolean;
+  // Background color
+  backgroundColor?: string;
+  // Defaults to true. Set false when branding is already baked into the page image.
+  addBranding?: boolean;
+}
+
+/**
+ * Parses a color string into a hex color plus an opacity value.
+ * Supports "#rrggbb", "#rgb", and "rgba(r,g,b,a)" / "rgb(r,g,b)".
+ * Defaults to opaque white when parsing fails.
+ */
+function parseColorWithAlpha(input: string): { color: string; opacity: number } {
+  const value = input.trim();
+  const rgbaMatch = value.match(
+    /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*(?:,\s*([0-9.]+)\s*)?\)$/i
+  );
+  if (rgbaMatch) {
+    const r = Math.max(0, Math.min(255, parseInt(rgbaMatch[1], 10)));
+    const g = Math.max(0, Math.min(255, parseInt(rgbaMatch[2], 10)));
+    const b = Math.max(0, Math.min(255, parseInt(rgbaMatch[3], 10)));
+    const a = rgbaMatch[4] !== undefined ? Math.max(0, Math.min(1, parseFloat(rgbaMatch[4]))) : 1;
+    const hex =
+      "#" +
+      [r, g, b].map((n) => n.toString(16).padStart(2, "0")).join("");
+    return { color: hex, opacity: a };
+  }
+  // Hex or named color - render fully opaque.
+  return { color: value, opacity: 1 };
+}
+
+/**
+ * Assemble pages into a PDF buffer.
+ *
+ * @param pages         Array of PageContent objects to render.
+ * @param brandingText  Optional branding string for the footer. Pass "off" or
+ *                      omit to suppress the branding footer entirely.
+ * @param showPageNumbers  When false, the page-number footer is suppressed.
+ *                         Defaults to true.
+ */
+export async function assemblePdf(
+  pages: PageContent[],
+  brandingText?: "WishesWithoutBordersCo" | "LaneDigitalWorks" | "off" | string,
+  showPageNumbers: boolean = true
+): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({
+      size: [PAGE_WIDTH, PAGE_HEIGHT],
+      margins: { top: 0, bottom: 0, left: 0, right: 0 },
+      autoFirstPage: false,
+    });
+
+    const chunks: Buffer[] = [];
+    doc.on("data", (chunk: Buffer) => chunks.push(chunk));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    for (const page of pages) {
+      doc.addPage({ size: [PAGE_WIDTH, PAGE_HEIGHT], margins: { top: 0, bottom: 0, left: 0, right: 0 } });
+
+      // Background color
+      if (page.backgroundColor) {
+        doc.rect(0, 0, PAGE_WIDTH, PAGE_HEIGHT).fill(page.backgroundColor);
+      }
+
+      // Page image. By default this remains full-page for covers, cards, and
+      // image-only generators. Text-heavy pages can opt into a contained top
+      // illustration by setting imageHeight.
+      const imageHeight = page.imageHeight === undefined
+        ? PAGE_HEIGHT
+        : Math.max(0, Math.min(PAGE_HEIGHT, page.imageHeight));
+
+      if (page.imageBuffer && imageHeight > 0) {
+        try {
+          doc.image(page.imageBuffer, 0, 0, {
+            width: PAGE_WIDTH,
+            height: imageHeight,
+          });
+        } catch (e) {
+          console.warn("Failed to embed image in PDF:", e);
+        }
+      }
+
+      // A partial-height image always gets a fully opaque white content area.
+      if (page.imageHeight !== undefined && imageHeight < PAGE_HEIGHT) {
+        doc.rect(0, imageHeight, PAGE_WIDTH, PAGE_HEIGHT - imageHeight).fill("#FFFFFF");
+      }
+
+      // Title
+      if (page.title) {
+        doc.font("Helvetica-Bold")
+          .fontSize(18)
+          .fillColor("#1a1a1a")
+          .text(page.title, MARGIN, MARGIN, {
+            width: PAGE_WIDTH - 2 * MARGIN,
+            align: "center",
+          });
+      }
+
+      // Subtitle
+      if (page.subtitle) {
+        doc.font("Helvetica")
+          .fontSize(12)
+          .fillColor("#444444")
+          .text(page.subtitle, MARGIN, doc.y + 4, {
+            width: PAGE_WIDTH - 2 * MARGIN,
+            align: "center",
+          });
+      }
+
+      // Instructions
+      if (page.instructions && page.instructions.length > 0) {
+        const instrY = page.title ? doc.y + 12 : MARGIN + 40;
+        doc.font("Helvetica")
+          .fontSize(11)
+          .fillColor("#333333");
+        for (const instruction of page.instructions) {
+          doc.text(`• ${instruction}`, MARGIN + 10, instrY + (page.instructions.indexOf(instruction) * 16), {
+            width: PAGE_WIDTH - 2 * MARGIN - 20,
+          });
+        }
+      }
+
+      // Custom labels at specific positions
+      if (page.labels) {
+        for (const label of page.labels) {
+          doc.font("Helvetica")
+            .fontSize(label.fontSize || 10)
+            .fillColor("#333333")
+            .text(label.text, label.x, label.y);
+        }
+      }
+
+      // Content blocks
+      if (page.contentBlocks) {
+        for (const block of page.contentBlocks) {
+          const fontName = block.font === "bold" ? "Helvetica-Bold" : "Helvetica";
+          const fontSize = block.fontSize || 11;
+          const blockWidth = block.width || PAGE_WIDTH - 2 * MARGIN;
+          const textColor = block.fontColor || block.color || "#333333";
+
+          // Optional readability panel behind the text.
+          if (block.backgroundColor) {
+            const padding = block.padding ?? 8;
+            // Measure the text so the panel matches the wrapped text height.
+            doc.font(fontName).fontSize(fontSize);
+            const textWidthForMeasure = blockWidth;
+            const measuredHeight = doc.heightOfString(block.text, {
+              width: textWidthForMeasure,
+              align: block.align || "left",
+            });
+            const panelHeight = (block.height ?? measuredHeight) + padding * 2;
+            const panelX = block.x - padding;
+            const panelY = block.y - padding;
+            const panelWidth = blockWidth + padding * 2;
+
+            const { color: fillColor, opacity: fillOpacity } = parseColorWithAlpha(
+              block.backgroundColor
+            );
+
+            doc.save();
+            doc.fillOpacity(fillOpacity);
+            if (block.radius && block.radius > 0) {
+              doc.roundedRect(panelX, panelY, panelWidth, panelHeight, block.radius).fill(fillColor);
+            } else {
+              doc.rect(panelX, panelY, panelWidth, panelHeight).fill(fillColor);
+            }
+            doc.restore();
+          }
+
+          doc.font(fontName)
+            .fontSize(fontSize)
+            .fillColor(textColor)
+            .text(block.text, block.x, block.y, {
+              width: blockWidth,
+              align: block.align || "left",
+            });
+        }
+      }
+
+      // Cards layout with cut lines
+      if (page.cards) {
+        for (const card of page.cards) {
+          // Card image
+          if (card.imageBuffer) {
+            try {
+              doc.image(card.imageBuffer, card.x, card.y, {
+                width: card.width,
+                height: card.height,
+              });
+            } catch (e) {
+              // Fill with a light color if image fails
+              doc.rect(card.x, card.y, card.width, card.height).fill("#f0f0f0");
+            }
+          }
+
+          // Card text overlays
+          if (card.topText) {
+            doc.font("Helvetica-Bold")
+              .fontSize(card.fontSize || 12)
+              .fillColor("#1a1a1a")
+              .text(card.topText, card.x + 4, card.y + 4, {
+                width: card.width - 8,
+                align: "center",
+              });
+          }
+          if (card.bottomText) {
+            doc.font("Helvetica")
+              .fontSize((card.fontSize || 12) - 2)
+              .fillColor("#333333")
+              .text(card.bottomText, card.x + 4, card.y + card.height - 20, {
+                width: card.width - 8,
+                align: "center",
+              });
+          }
+          if (card.frontText) {
+            const textY = card.y + card.height / 2 - 10;
+            doc.font("Helvetica-Bold")
+              .fontSize(card.fontSize || 14)
+              .fillColor("#1a1a1a")
+              .text(card.frontText, card.x + 8, textY, {
+                width: card.width - 16,
+                align: "center",
+              });
+          }
+        }
+
+        // Cut lines
+        if (page.showCutLines) {
+          doc.strokeColor("#cccccc").lineWidth(0.5).dash(4, { space: 2 });
+          // Draw cut lines between cards
+          const uniqueXs = Array.from(new Set(page.cards.map(c => c.x))).sort((a, b) => a - b);
+          const uniqueYs = Array.from(new Set(page.cards.map(c => c.y))).sort((a, b) => a - b);
+
+          // Vertical cut lines
+          for (const x of uniqueXs) {
+            if (x > MARGIN) {
+              doc.moveTo(x, MARGIN).lineTo(x, PAGE_HEIGHT - MARGIN).stroke();
+            }
+          }
+          // Right edge of last column
+          if (page.cards.length > 0) {
+            const rightEdge = Math.max(...page.cards.map(c => c.x + c.width));
+            if (rightEdge < PAGE_WIDTH - MARGIN) {
+              doc.moveTo(rightEdge, MARGIN).lineTo(rightEdge, PAGE_HEIGHT - MARGIN).stroke();
+            }
+          }
+
+          // Horizontal cut lines
+          for (const y of uniqueYs) {
+            if (y > MARGIN) {
+              doc.moveTo(MARGIN, y).lineTo(PAGE_WIDTH - MARGIN, y).stroke();
+            }
+          }
+          // Bottom edge of last row
+          if (page.cards.length > 0) {
+            const bottomEdge = Math.max(...page.cards.map(c => c.y + c.height));
+            if (bottomEdge < PAGE_HEIGHT - MARGIN) {
+              doc.moveTo(MARGIN, bottomEdge).lineTo(PAGE_WIDTH - MARGIN, bottomEdge).stroke();
+            }
+          }
+          doc.undash();
+        }
+      }
+
+      // Page number — suppressed when showPageNumbers is false.
+      if (showPageNumbers && page.pageNumber) {
+        const pageNumText = page.totalPages
+          ? `${page.pageNumber} / ${page.totalPages}`
+          : `${page.pageNumber}`;
+        doc.font("Helvetica")
+          .fontSize(9)
+          .fillColor("#888888")
+          .text(pageNumText, PAGE_WIDTH - MARGIN - 60, PAGE_HEIGHT - 24, {
+            width: 60,
+            align: "right",
+          });
+      }
+
+      // Branding footer — skipped when addBranding is false, when brandingText is
+      // not provided, or when brandingText is explicitly "off".
+      if (
+        page.addBranding !== false &&
+        brandingText &&
+        brandingText !== "off"
+      ) {
+        doc.font("Helvetica")
+          .fontSize(7)
+          .fillColor("#aaaaaa")
+          .text(brandingText, MARGIN, PAGE_HEIGHT - 20, {
+            width: PAGE_WIDTH - 2 * MARGIN - 70,
+            align: "left",
+          });
+      }
+    }
+
+    doc.end();
+  });
+}
+
+/**
+ * Fetches an image from a URL and returns it as a compressed Buffer.
+ * Images are compressed to JPEG 80% quality, max 2048px on longest side.
+ * This prevents Supabase upload size errors on multi-page PDFs (30 pages).
+ * A 30-page PDF stays under ~15MB instead of 90-150MB with raw PNGs.
+ */
+export async function fetchImageBuffer(url: string): Promise<Buffer> {
+  // Handle relative URLs (from our storage) - always resolve against localhost
+  let fullUrl = url;
+  if (url.startsWith("/")) {
+    const port = process.env.PORT || 3000;
+    fullUrl = `http://localhost:${port}${url}`;
+  }
+  const response = await fetch(fullUrl);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch image: ${response.status} from ${fullUrl}`);
+  }
+  const arrayBuffer = await response.arrayBuffer();
+  const rawBuffer = Buffer.from(arrayBuffer);
+
+  // Compress image to keep PDF size manageable for upload
+  try {
+    const compressed = await sharp(rawBuffer)
+      .resize(2048, 2048, { fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality: 80, progressive: true })
+      .toBuffer();
+    return compressed;
+  } catch {
+    // If compression fails, return raw buffer (still works, just larger)
+    return rawBuffer;
+  }
+}
