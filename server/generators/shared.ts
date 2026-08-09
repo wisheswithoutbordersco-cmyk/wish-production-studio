@@ -655,10 +655,17 @@ export async function processChunk(
 
 /**
  * Assemble final PDF from all generated page images and upload to storage.
+ * Accepts an optional brandingText to pass through to assemblePdf.
+ * Pass "off" or omit to suppress the PDF-level branding footer.
+ * Pass showPageNumbers: false to suppress the page-number footer.
  */
 export async function finalizePdf(
   job: GenerationJob,
-  options: { addPdfBranding?: boolean } = {}
+  options: {
+    addPdfBranding?: boolean;
+    brandingText?: "WishesWithoutBordersCo" | "LaneDigitalWorks" | "off" | string;
+    showPageNumbers?: boolean;
+  } = {}
 ): Promise<void> {
   updateJob(job.id, { statusMessage: "Assembling PDF..." });
 
@@ -685,7 +692,11 @@ export async function finalizePdf(
       });
     }
 
-    const pdfBuffer = await assemblePdf(pageContents);
+    const pdfBuffer = await assemblePdf(
+      pageContents,
+      options.brandingText,
+      options.showPageNumbers !== false
+    );
     console.log(`PDF assembled: ${(pdfBuffer.length / 1024 / 1024).toFixed(2)} MB for ${successPages.length} pages`);
 
     // Upload PDF to storage
