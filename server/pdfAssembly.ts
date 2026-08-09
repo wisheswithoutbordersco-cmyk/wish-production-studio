@@ -11,7 +11,6 @@ import sharp from "sharp";
 const PAGE_WIDTH = 612;  // 8.5 inches at 72 DPI
 const PAGE_HEIGHT = 792; // 11 inches at 72 DPI
 const MARGIN = 36;       // 0.5 inch margins
-const BRANDING_TEXT = "WishesWithoutBordersCo";
 
 export interface PageContent {
   imageBuffer?: Buffer;
@@ -91,7 +90,20 @@ function parseColorWithAlpha(input: string): { color: string; opacity: number } 
   return { color: value, opacity: 1 };
 }
 
-export async function assemblePdf(pages: PageContent[]): Promise<Buffer> {
+/**
+ * Assemble pages into a PDF buffer.
+ *
+ * @param pages         Array of PageContent objects to render.
+ * @param brandingText  Optional branding string for the footer. Pass "off" or
+ *                      omit to suppress the branding footer entirely.
+ * @param showPageNumbers  When false, the page-number footer is suppressed.
+ *                         Defaults to true.
+ */
+export async function assemblePdf(
+  pages: PageContent[],
+  brandingText?: "WishesWithoutBordersCo" | "LaneDigitalWorks" | "off" | string,
+  showPageNumbers: boolean = true
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
       size: [PAGE_WIDTH, PAGE_HEIGHT],
@@ -280,7 +292,7 @@ export async function assemblePdf(pages: PageContent[]): Promise<Buffer> {
           // Draw cut lines between cards
           const uniqueXs = Array.from(new Set(page.cards.map(c => c.x))).sort((a, b) => a - b);
           const uniqueYs = Array.from(new Set(page.cards.map(c => c.y))).sort((a, b) => a - b);
-          
+
           // Vertical cut lines
           for (const x of uniqueXs) {
             if (x > MARGIN) {
@@ -294,7 +306,7 @@ export async function assemblePdf(pages: PageContent[]): Promise<Buffer> {
               doc.moveTo(rightEdge, MARGIN).lineTo(rightEdge, PAGE_HEIGHT - MARGIN).stroke();
             }
           }
-          
+
           // Horizontal cut lines
           for (const y of uniqueYs) {
             if (y > MARGIN) {
@@ -312,8 +324,8 @@ export async function assemblePdf(pages: PageContent[]): Promise<Buffer> {
         }
       }
 
-      // Page number
-      if (page.pageNumber) {
+      // Page number — suppressed when showPageNumbers is false.
+      if (showPageNumbers && page.pageNumber) {
         const pageNumText = page.totalPages
           ? `${page.pageNumber} / ${page.totalPages}`
           : `${page.pageNumber}`;
@@ -326,12 +338,17 @@ export async function assemblePdf(pages: PageContent[]): Promise<Buffer> {
           });
       }
 
-      // Branding footer (optional for raw posters that already include branding).
-      if (page.addBranding !== false) {
+      // Branding footer — skipped when addBranding is false, when brandingText is
+      // not provided, or when brandingText is explicitly "off".
+      if (
+        page.addBranding !== false &&
+        brandingText &&
+        brandingText !== "off"
+      ) {
         doc.font("Helvetica")
           .fontSize(7)
           .fillColor("#aaaaaa")
-          .text(BRANDING_TEXT, MARGIN, PAGE_HEIGHT - 20, {
+          .text(brandingText, MARGIN, PAGE_HEIGHT - 20, {
             width: PAGE_WIDTH - 2 * MARGIN - 70,
             align: "left",
           });
