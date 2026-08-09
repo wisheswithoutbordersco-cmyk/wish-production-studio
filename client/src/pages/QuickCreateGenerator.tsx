@@ -28,11 +28,11 @@ type SizePreset = typeof SIZE_OPTIONS[number]["id"];
 export default function QuickCreateGenerator() {
   const [prompt, setPrompt] = useState("");
   const [pageCount, setPageCount] = useState(5);
-  const [branding, setBranding] = useState<"WishesWithoutBordersCo" | "LaneDigitalWorks" | "none">("WishesWithoutBordersCo");
+  const [branding, setBranding] = useState<"WishesWithoutBordersCo" | "LaneDigitalWorks" | "none">("none");
   const [outputStyle, setOutputStyle] = useState<"full-color" | "coloring">("full-color");
   const [sizePreset, setSizePreset] = useState<SizePreset>("8.5x11-portrait");
-  const [showPageNumbers, setShowPageNumbers] = useState(true);
-  const [upscale, setUpscale] = useState(false);
+  const [showPageNumbers, setShowPageNumbers] = useState(false);
+  const [upscale, setUpscale] = useState(true);
   // Whether the server has REPLICATE_API_TOKEN — checked via a lightweight env
   // endpoint if available; defaults to showing the toggle (server will ignore it
   // gracefully if the token is absent).
