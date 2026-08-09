@@ -5,7 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Wand2, Upload, Loader2, Download, ArrowUpCircle, Paintbrush, Sparkles, AlertCircle } from "lucide-react";
+import { Wand2, Upload, Loader2, Download, ArrowUpCircle, Paintbrush, Sparkles, AlertCircle, ZoomIn } from "lucide-react";
 import { toast } from "sonner";
 
 const RESTYLE_OPTIONS = [
@@ -192,16 +192,52 @@ export default function EnhanceTools() {
           </div>
 
           {/* Enhancement Options */}
-          <Tabs defaultValue="upscale" className="w-full">
-            <TabsList className="grid w-full grid-cols-3">
+          <Tabs defaultValue="true-upscale" className="w-full">
+            <TabsList className="grid w-full grid-cols-4">
+              <TabsTrigger value="true-upscale">4x AI</TabsTrigger>
               <TabsTrigger value="upscale">Upscale</TabsTrigger>
               <TabsTrigger value="restyle">Restyle</TabsTrigger>
               <TabsTrigger value="reimagine">Reimagine</TabsTrigger>
             </TabsList>
 
+            <TabsContent value="true-upscale" className="space-y-4 mt-4">
+              <p className="text-sm text-muted-foreground">
+                True 4x AI upscale using Real-ESRGAN. Best for print-quality enlargement.
+              </p>
+              <Button
+                onClick={async () => {
+                  if (!uploadedImageUrl) return;
+                  setIsProcessing(true);
+                  setError(null);
+                  setResultUrl(null);
+                  try {
+                    const response = await fetch("/api/enhance/true-upscale", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ imageUrl: uploadedImageUrl }),
+                    });
+                    if (!response.ok) throw new Error("True upscale failed");
+                    const { imageUrl } = await response.json();
+                    setResultUrl(imageUrl);
+                    toast.success("Image upscaled 4x!");
+                  } catch (err) {
+                    setError("True upscale failed. Make sure REPLICATE_API_TOKEN is set.");
+                    toast.error("True upscale failed");
+                  } finally {
+                    setIsProcessing(false);
+                  }
+                }}
+                disabled={!uploadedImageUrl || isProcessing}
+                className="w-full"
+              >
+                {isProcessing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <ZoomIn className="h-4 w-4 mr-2" />}
+                True 4x Upscale (AI)
+              </Button>
+            </TabsContent>
+
             <TabsContent value="upscale" className="space-y-4 mt-4">
               <p className="text-sm text-muted-foreground">
-                Enhance resolution and clarity for print-quality output.
+                Enhance resolution and clarity using AI generation (legacy).
               </p>
               <Button
                 onClick={handleUpscale}

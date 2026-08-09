@@ -6,47 +6,26 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { GenerationProgress } from "@/components/GenerationProgress";
 import { useGenerationJob } from "@/hooks/useGenerationJob";
+import { ProductionControls, DEFAULT_PRODUCTION_SETTINGS, type ProductionSettings } from "@/components/ProductionControls";
 import { Layers, Sparkles } from "lucide-react";
 
 const SUBJECTS = [
-  "Alphabet",
-  "Numbers",
-  "Colors",
-  "Shapes",
-  "Animals",
-  "Food",
-  "Body Parts",
-  "Emotions",
-  "Actions/Verbs",
-  "Sight Words",
+  "Alphabet", "Numbers", "Colors", "Shapes", "Animals",
+  "Food", "Body Parts", "Emotions", "Actions/Verbs", "Sight Words",
 ];
 
 const LANGUAGES = [
-  "English Only",
-  "English + Spanish",
-  "English + French",
-  "English + Mandarin",
-  "English + Arabic",
-  "English + Swahili",
-  "English + Hindi",
-  "English + Portuguese",
-  "English + Japanese",
-  "English + Korean",
+  "English Only", "English + Spanish", "English + French",
+  "English + Mandarin", "English + Arabic", "English + Swahili",
+  "English + Hindi", "English + Portuguese", "English + Japanese", "English + Korean",
 ];
 
 const STYLES = [
-  "Realistic Illustrations",
-  "Cartoon",
-  "Watercolor",
-  "Bold and Simple",
-  "Montessori-style",
+  "Realistic Illustrations", "Cartoon", "Watercolor",
+  "Bold and Simple", "Montessori-style",
 ];
 
-const CARD_SIZES = [
-  "Standard (3x5)",
-  "Large (4x6)",
-  "Mini (2.5x3.5)",
-];
+const CARD_SIZES = ["Standard (3x5)", "Large (4x6)", "Mini (2.5x3.5)"];
 
 export default function FlashcardGenerator() {
   const [subject, setSubject] = useState("Animals");
@@ -54,6 +33,7 @@ export default function FlashcardGenerator() {
   const [style, setStyle] = useState("Bold and Simple");
   const [cardsPerSet, setCardsPerSet] = useState([12]);
   const [cardSize, setCardSize] = useState("Standard (3x5)");
+  const [production, setProduction] = useState<ProductionSettings>(DEFAULT_PRODUCTION_SETTINGS);
 
   const { jobState, isGenerating, progress, startJob, cancelJob } = useGenerationJob();
 
@@ -64,6 +44,9 @@ export default function FlashcardGenerator() {
       style,
       cardsPerSet: cardsPerSet[0],
       cardSize,
+      branding: production.branding,
+      pageSize: production.pageSize,
+      showPageNumbers: production.showPageNumbers,
     });
   };
 
@@ -144,6 +127,9 @@ export default function FlashcardGenerator() {
             </div>
           </div>
 
+          {/* Production Controls */}
+          <ProductionControls settings={production} onChange={setProduction} />
+
           <Button
             onClick={handleGenerate}
             disabled={isGenerating}
@@ -172,6 +158,7 @@ export default function FlashcardGenerator() {
               isGenerating={isGenerating}
               progress={progress}
               onCancel={cancelJob}
+              autoUpscale={production.autoUpscale}
               productMeta={{
                 title: `Flashcards - ${subject} (${languages})`,
                 type: "Flashcard",

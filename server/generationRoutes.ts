@@ -19,6 +19,7 @@ import {
   createColoringBookJob, processColoringBookChunk,
   generateCard, generateCardFromImage,
   enhanceUpscale, enhanceRestyle, enhanceReimagine,
+  trueUpscale,
 } from "./generators";
 import { storagePut } from "./storage";
 
@@ -86,6 +87,21 @@ generationRouter.post("/api/enhance/reimagine", async (req: Request, res: Respon
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : "Reimagine failed" });
+  }
+});
+
+// ===== True AI Upscaler (Upgrade 6: Real-ESRGAN via Replicate) =====
+generationRouter.post("/api/enhance/true-upscale", async (req: Request, res: Response) => {
+  try {
+    const { imageUrl } = req.body;
+    if (!imageUrl) {
+      res.status(400).json({ error: "Missing imageUrl" });
+      return;
+    }
+    const upscaledUrl = await trueUpscale(imageUrl);
+    res.json({ imageUrl: upscaledUrl });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : "True upscale failed" });
   }
 });
 

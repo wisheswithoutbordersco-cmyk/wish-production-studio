@@ -105,5 +105,9 @@ export function getJobPublicState(job: GenerationJob) {
     filename: job.filename,
     statusMessage: job.statusMessage,
     errorMessage: job.errorMessage,
+    // Upgrade 3: Return individual PNG URLs
+    imageUrls: job.options._imageUrls || job.pageResults.filter(r => r.status === "success").map(r => r.imageUrl).filter(Boolean),
+    // Upgrade 5: Return prompt/metadata
+    metadata: job.options._metadata || null,
   };
 }

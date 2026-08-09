@@ -4,7 +4,7 @@
  * Uses tRPC mutation (single card, not chunked).
  */
 import { generateImage } from "../_core/imageGeneration";
-import { assemblePdf, fetchImageBuffer, PageContent } from "../pdfAssembly";
+import { assemblePdf, fetchImageBuffer, PageContent, type BrandingOption, type PageSize } from "../pdfAssembly";
 import { storagePut } from "../storage";
 
 export interface CardOptions {
@@ -12,11 +12,17 @@ export interface CardOptions {
   style: string;
   message?: string;
   customDetails?: string;
+  branding?: BrandingOption;
+  showPageNumbers?: boolean;
+  pageSize?: PageSize;
 }
 
 export interface CardFromImageOptions {
   imageUrl: string;
   message?: string;
+  branding?: BrandingOption;
+  showPageNumbers?: boolean;
+  pageSize?: PageSize;
 }
 
 function buildCardPrompt(options: CardOptions): string {
@@ -38,13 +44,20 @@ function buildCardPrompt(options: CardOptions): string {
   return parts.join(", ");
 }
 
-export async function generateCard(options: CardOptions): Promise<{ pdfUrl: string }> {
+export async function generateCard(options: CardOptions): Promise<{ pdfUrl: string; imageUrls: string[] }> {
   // Generate the card front illustration
   const prompt = buildCardPrompt(options);
   const result = await generateImage({ prompt });
   if (!result.url) throw new Error("Image generation failed");
 
   const imageBuffer = await fetchImageBuffer(result.url);
+
+  // Save the PNG to storage (Upgrade 3)
+  const { url: pngUrl } = await storagePut(
+    `products/cards/card-${options.occasion.toLowerCase().replace(/\s+/g, "-")}-${Date.now()}.png`,
+    imageBuffer,
+    "image/png"
+  );
 
   // Build a 5x7 card PDF (front page with image, inside page with message)
   const pages: PageContent[] = [
@@ -74,18 +87,36 @@ export async function generateCard(options: CardOptions): Promise<{ pdfUrl: stri
     });
   }
 
-  const pdfBuffer = await assemblePdf(pages);
+  const pdfBuffer = await assemblePdf(pages, {
+    branding: options.branding || "wishes",
+    showPageNumbers: options.showPageNumbers !== false,
+    pageSize: options.pageSize || "8.5x11-portrait",
+  });
   const { url: pdfUrl } = await storagePut(
     `products/cards/card-${options.occasion.toLowerCase().replace(/\s+/g, "-")}-${Date.now()}.pdf`,
     pdfBuffer,
     "application/pdf"
   );
 
-  return { pdfUrl };
+  // Upgrade 5: Save metadata JSON
+  await storagePut(
+    `products/cards/card-${options.occasion.toLowerCase().replace(/\s+/g, "-")}-${Date.now()}-meta.json`,
+    JSON.stringify({ prompt, timestamp: Date.now(), branding: options.branding || "wishes", pageSize: options.pageSize || "8.5x11-portrait" }),
+    "application/json"
+  );
+
+  return { pdfUrl, imageUrls: [pngUrl] };
 }
 
-export async function generateCardFromImage(options: CardFromImageOptions): Promise<{ pdfUrl: string }> {
+export async function generateCardFromImage(options: CardFromImageOptions): Promise<{ pdfUrl: string; imageUrls: string[] }> {
   const imageBuffer = await fetchImageBuffer(options.imageUrl);
+
+  // Save the PNG to storage (Upgrade 3)
+  const { url: pngUrl } = await storagePut(
+    `products/cards/card-custom-${Date.now()}.png`,
+    imageBuffer,
+    "image/png"
+  );
 
   const pages: PageContent[] = [
     {
@@ -112,12 +143,16 @@ export async function generateCardFromImage(options: CardFromImageOptions): Prom
     });
   }
 
-  const pdfBuffer = await assemblePdf(pages);
+  const pdfBuffer = await assemblePdf(pages, {
+    branding: options.branding || "wishes",
+    showPageNumbers: options.showPageNumbers !== false,
+    pageSize: options.pageSize || "8.5x11-portrait",
+  });
   const { url: pdfUrl } = await storagePut(
     `products/cards/card-custom-${Date.now()}.pdf`,
     pdfBuffer,
     "application/pdf"
   );
 
-  return { pdfUrl };
+  return { pdfUrl, imageUrls: [pngUrl] };
 }

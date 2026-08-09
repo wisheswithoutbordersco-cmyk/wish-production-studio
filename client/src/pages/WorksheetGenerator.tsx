@@ -6,18 +6,10 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { GenerationProgress } from "@/components/GenerationProgress";
 import { useGenerationJob } from "@/hooks/useGenerationJob";
+import { ProductionControls, DEFAULT_PRODUCTION_SETTINGS, type ProductionSettings } from "@/components/ProductionControls";
 import { FileText, Sparkles } from "lucide-react";
 
-const SUBJECTS = [
-  "Math",
-  "Reading",
-  "Writing",
-  "Science",
-  "Social Studies",
-  "Art",
-  "Music",
-  "SEL",
-];
+const SUBJECTS = ["Math", "Reading", "Writing", "Science", "Social Studies", "Art", "Music", "SEL"];
 
 const SKILLS_MAP: Record<string, string[]> = {
   "Math": ["Addition", "Subtraction", "Multiplication", "Division", "Fractions", "Telling Time", "Money", "Patterns", "Geometry", "Word Problems"],
@@ -30,15 +22,7 @@ const SKILLS_MAP: Record<string, string[]> = {
   "SEL": ["Emotions", "Friendship", "Kindness", "Self-Regulation", "Empathy", "Conflict Resolution", "Growth Mindset"],
 };
 
-const GRADE_LEVELS = [
-  "Pre-K",
-  "Kindergarten",
-  "1st Grade",
-  "2nd Grade",
-  "3rd Grade",
-  "4th Grade",
-  "5th Grade",
-];
+const GRADE_LEVELS = ["Pre-K", "Kindergarten", "1st Grade", "2nd Grade", "3rd Grade", "4th Grade", "5th Grade"];
 
 const THEMES = [
   "Animals", "Space", "Ocean", "Dinosaurs", "Nature",
@@ -52,6 +36,7 @@ export default function WorksheetGenerator() {
   const [gradeLevel, setGradeLevel] = useState("1st Grade");
   const [theme, setTheme] = useState("Animals");
   const [quantity, setQuantity] = useState([5]);
+  const [production, setProduction] = useState<ProductionSettings>(DEFAULT_PRODUCTION_SETTINGS);
 
   const { jobState, isGenerating, progress, startJob, cancelJob } = useGenerationJob();
 
@@ -72,6 +57,9 @@ export default function WorksheetGenerator() {
       gradeLevel,
       theme,
       quantity: quantity[0],
+      branding: production.branding,
+      pageSize: production.pageSize,
+      showPageNumbers: production.showPageNumbers,
     });
   };
 
@@ -152,6 +140,9 @@ export default function WorksheetGenerator() {
             </div>
           </div>
 
+          {/* Production Controls */}
+          <ProductionControls settings={production} onChange={setProduction} />
+
           <Button
             onClick={handleGenerate}
             disabled={isGenerating}
@@ -180,6 +171,7 @@ export default function WorksheetGenerator() {
               isGenerating={isGenerating}
               progress={progress}
               onCancel={cancelJob}
+              autoUpscale={production.autoUpscale}
               productMeta={{
                 title: `${subject} Worksheet - ${specificSkill} (${gradeLevel})`,
                 type: "Worksheet",

@@ -5,8 +5,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Progress } from "@/components/ui/progress";
-import { Heart, Sparkles, Loader2, Download, FileText, CheckCircle, AlertCircle } from "lucide-react";
+import { Heart, Sparkles, Loader2, Download, FileText, CheckCircle, AlertCircle, Image, ZoomIn } from "lucide-react";
 import { toast } from "sonner";
+import { ProductionControls, DEFAULT_PRODUCTION_SETTINGS, type ProductionSettings } from "@/components/ProductionControls";
 
 const OCCASIONS = [
   "Birthday", "Mother's Day", "Father's Day", "Graduation",
@@ -28,19 +29,31 @@ export default function CardGenerator() {
   const [message, setMessage] = useState("");
   const [customDetails, setCustomDetails] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
-  const [result, setResult] = useState<{ pdfUrl: string } | null>(null);
+  const [result, setResult] = useState<{ pdfUrl: string; imageUrls?: string[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [production, setProduction] = useState<ProductionSettings>(DEFAULT_PRODUCTION_SETTINGS);
+  const [upscaling, setUpscaling] = useState(false);
+  const [upscaledUrl, setUpscaledUrl] = useState<string | null>(null);
 
   const handleGenerate = async () => {
     setIsGenerating(true);
     setResult(null);
     setError(null);
+    setUpscaledUrl(null);
 
     try {
       const response = await fetch("/api/generate/card", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ occasion, style, message, customDetails }),
+        body: JSON.stringify({
+          occasion,
+          style,
+          message,
+          customDetails,
+          branding: production.branding,
+          pageSize: production.pageSize,
+          showPageNumbers: production.showPageNumbers,
+        }),
       });
 
       if (!response.ok) {
@@ -51,12 +64,38 @@ export default function CardGenerator() {
       const data = await response.json();
       setResult(data);
       toast.success("Card generated successfully!");
+
+      // Auto-upscale if enabled
+      if (production.autoUpscale && data.imageUrls?.[0]) {
+        handleUpscale(data.imageUrls[0]);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Unknown error";
       setError(msg);
       toast.error(msg);
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  const handleUpscale = async (imageUrl?: string) => {
+    const url = imageUrl || result?.imageUrls?.[0];
+    if (!url) return;
+    setUpscaling(true);
+    try {
+      const response = await fetch("/api/enhance/true-upscale", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageUrl: url }),
+      });
+      if (!response.ok) throw new Error("Upscale failed");
+      const data = await response.json();
+      setUpscaledUrl(data.imageUrl);
+      toast.success("Image upscaled to 4x!");
+    } catch {
+      toast.error("Upscale failed");
+    } finally {
+      setUpscaling(false);
     }
   };
 
@@ -118,6 +157,9 @@ export default function CardGenerator() {
             />
           </div>
 
+          {/* Production Controls */}
+          <ProductionControls settings={production} onChange={setProduction} />
+
           <Button
             onClick={handleGenerate}
             disabled={isGenerating}
@@ -168,19 +210,55 @@ export default function CardGenerator() {
                 <CheckCircle className="h-5 w-5" />
                 <span className="text-sm font-medium">Card ready!</span>
               </div>
-              <div className="flex gap-3">
+
+              {upscaling && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Upscaling to 4x resolution...</span>
+                </div>
+              )}
+
+              <div className="flex gap-3 flex-wrap">
                 <Button asChild className="flex-1">
                   <a href={result.pdfUrl} download={`card-${occasion.toLowerCase()}.pdf`}>
                     <Download className="h-4 w-4 mr-2" />
                     Download PDF
                   </a>
                 </Button>
+
+                {/* PNG download (Upgrade 3) */}
+                {result.imageUrls && result.imageUrls[0] && (
+                  <Button variant="outline" asChild>
+                    <a href={result.imageUrls[0]} download>
+                      <Image className="h-4 w-4 mr-2" />
+                      PNG
+                    </a>
+                  </Button>
+                )}
+
                 <Button variant="outline" asChild>
                   <a href={result.pdfUrl} target="_blank" rel="noopener noreferrer">
                     <FileText className="h-4 w-4 mr-2" />
                     Preview
                   </a>
                 </Button>
+
+                {/* Upscale button */}
+                {!upscaledUrl && !upscaling && !production.autoUpscale && (
+                  <Button variant="outline" onClick={() => handleUpscale()}>
+                    <ZoomIn className="h-4 w-4 mr-2" />
+                    Upscale 4x
+                  </Button>
+                )}
+
+                {upscaledUrl && (
+                  <Button variant="outline" asChild>
+                    <a href={upscaledUrl} download="upscaled-4x.png">
+                      <ZoomIn className="h-4 w-4 mr-2" />
+                      Download 4x
+                    </a>
+                  </Button>
+                )}
               </div>
             </div>
           )}

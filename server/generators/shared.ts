@@ -7,7 +7,7 @@
 import { generateImage } from "../_core/imageGeneration";
 import { invokeLLM } from "../_core/llm";
 import { storagePut } from "../storage";
-import { assemblePdf, fetchImageBuffer, PageContent } from "../pdfAssembly";
+import { assemblePdf, fetchImageBuffer, PageContent, type BrandingOption, type PageSize, type PdfAssemblyOptions } from "../pdfAssembly";
 import { createJob, getJob, updateJob, addPageResult, type GenerationJob, type PageResult } from "../jobs";
 
 // Pages to generate per poll request (chunked pattern)
@@ -164,7 +164,19 @@ export async function processChunk(
 }
 
 /**
+ * Extract PDF assembly options from job options (used by all generators).
+ */
+export function getPdfOptionsFromJob(job: GenerationJob): PdfAssemblyOptions {
+  return {
+    branding: (job.options.branding as BrandingOption) || "wishes",
+    showPageNumbers: job.options.showPageNumbers !== false,
+    pageSize: (job.options.pageSize as PageSize) || "8.5x11-portrait",
+  };
+}
+
+/**
  * Assemble final PDF from all generated page images and upload to storage.
+ * Also saves individual PNG URLs (Upgrade 3).
  */
 export async function finalizePdf(job: GenerationJob): Promise<void> {
   updateJob(job.id, { statusMessage: "Assembling PDF..." });
@@ -191,7 +203,9 @@ export async function finalizePdf(job: GenerationJob): Promise<void> {
       });
     }
 
-    const pdfBuffer = await assemblePdf(pageContents);
+    // Get PDF assembly options from job options
+    const pdfOptions = getPdfOptionsFromJob(job);
+    const pdfBuffer = await assemblePdf(pageContents, pdfOptions);
 
     // Upload PDF to storage
     const { url: pdfUrl } = await storagePut(
@@ -203,11 +217,40 @@ export async function finalizePdf(job: GenerationJob): Promise<void> {
     // Set cover image from first successful page
     const coverUrl = successPages[0]?.imageUrl || null;
 
+    // Collect all PNG image URLs (Upgrade 3)
+    const imageUrls = successPages.map(p => p.imageUrl).filter(Boolean);
+
+    // Upgrade 5: Save metadata JSON alongside the product
+    const metadata = {
+      generatorType: job.generatorType,
+      timestamp: Date.now(),
+      branding: pdfOptions.branding,
+      pageSize: pdfOptions.pageSize,
+      showPageNumbers: pdfOptions.showPageNumbers,
+      options: { ...job.options },
+      imageUrls,
+    };
+    // Remove internal fields from metadata
+    delete metadata.options._imageUrls;
+    delete metadata.options._metadata;
+
+    try {
+      await storagePut(
+        `products/${job.generatorType}/${job.filename.replace('.pdf', '')}-meta.json`,
+        JSON.stringify(metadata, null, 2),
+        "application/json"
+      );
+    } catch (e) {
+      console.warn("Failed to save metadata:", e);
+    }
+
     updateJob(job.id, {
       status: successPages.length === job.totalPages ? "complete" : "partial",
       pdfUrl,
       coverImageUrl: coverUrl,
       statusMessage: "PDF ready for download!",
+      // Store imageUrls and metadata in options for retrieval
+      options: { ...job.options, _imageUrls: imageUrls, _metadata: metadata },
     });
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : "PDF assembly failed";

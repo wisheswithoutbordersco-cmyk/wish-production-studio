@@ -7,6 +7,7 @@ import { Slider } from "@/components/ui/slider";
 import { Palette, Sparkles } from "lucide-react";
 import { useGenerationJob } from "@/hooks/useGenerationJob";
 import { GenerationProgress } from "@/components/GenerationProgress";
+import { ProductionControls, DEFAULT_PRODUCTION_SETTINGS, type ProductionSettings } from "@/components/ProductionControls";
 
 const THEMES = [
   "Animals", "Dinosaurs", "Ocean Life", "Space", "Fairy Tales",
@@ -32,6 +33,7 @@ export default function ColoringBookGenerator() {
   const [ageRange, setAgeRange] = useState("4-6 Preschool");
   const [pageCount, setPageCount] = useState([15]);
   const [detailLevel, setDetailLevel] = useState("kids");
+  const [production, setProduction] = useState<ProductionSettings>(DEFAULT_PRODUCTION_SETTINGS);
 
   const { jobState, isGenerating, progress, startJob, cancelJob } = useGenerationJob();
 
@@ -41,6 +43,9 @@ export default function ColoringBookGenerator() {
       ageRange,
       pageCount: pageCount[0],
       detailLevel,
+      branding: production.branding,
+      pageSize: production.pageSize,
+      showPageNumbers: production.showPageNumbers,
     });
   };
 
@@ -110,6 +115,9 @@ export default function ColoringBookGenerator() {
             </div>
           </div>
 
+          {/* Production Controls */}
+          <ProductionControls settings={production} onChange={setProduction} />
+
           <Button
             onClick={handleGenerate}
             disabled={isGenerating}
@@ -139,6 +147,7 @@ export default function ColoringBookGenerator() {
               isGenerating={isGenerating}
               progress={progress}
               onCancel={cancelJob}
+              autoUpscale={production.autoUpscale}
               productMeta={{
                 title: `Coloring Book - ${theme} (${ageRange})`,
                 type: "Coloring Book",

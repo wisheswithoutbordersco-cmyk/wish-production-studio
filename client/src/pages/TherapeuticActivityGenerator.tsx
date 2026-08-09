@@ -6,37 +6,24 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { GenerationProgress } from "@/components/GenerationProgress";
 import { useGenerationJob } from "@/hooks/useGenerationJob";
+import { ProductionControls, DEFAULT_PRODUCTION_SETTINGS, type ProductionSettings } from "@/components/ProductionControls";
 import { Heart, Sparkles } from "lucide-react";
 
 const ACTIVITY_TYPES = [
-  "Visual Schedule",
-  "Calm-Down Kit",
-  "Sensory Activity",
-  "Emotional Regulation",
-  "Executive Function",
-  "Social Stories",
-  "Fidget Alternatives",
-  "Routine Cards",
+  "Visual Schedule", "Calm-Down Kit", "Sensory Activity",
+  "Emotional Regulation", "Executive Function", "Social Stories",
+  "Fidget Alternatives", "Routine Cards",
 ];
 
 const TARGETS = [
-  "ADHD",
-  "Autism/ASD",
-  "Anxiety",
-  "Sensory Processing",
-  "General Self-Regulation",
-  "OT (Occupational Therapy) Support",
+  "ADHD", "Autism/ASD", "Anxiety", "Sensory Processing",
+  "General Self-Regulation", "OT (Occupational Therapy) Support",
 ];
 
 const REPRESENTATIONS = [
-  "Mixed/Diverse",
-  "African American",
-  "Hispanic/Latino",
-  "Asian American",
-  "South Asian",
-  "Middle Eastern",
-  "Indigenous/Native American",
-  "No specific",
+  "Mixed/Diverse", "African American", "Hispanic/Latino",
+  "Asian American", "South Asian", "Middle Eastern",
+  "Indigenous/Native American", "No specific",
 ];
 
 const AGE_RANGES = ["3-5", "5-7", "7-9", "9-12", "13+"];
@@ -47,6 +34,7 @@ export default function TherapeuticActivityGenerator() {
   const [representation, setRepresentation] = useState("Mixed/Diverse");
   const [ageRange, setAgeRange] = useState("5-7");
   const [pageCount, setPageCount] = useState([8]);
+  const [production, setProduction] = useState<ProductionSettings>(DEFAULT_PRODUCTION_SETTINGS);
 
   const { jobState, isGenerating, progress, startJob, cancelJob } = useGenerationJob();
 
@@ -57,6 +45,9 @@ export default function TherapeuticActivityGenerator() {
       representation,
       ageRange,
       pageCount: pageCount[0],
+      branding: production.branding,
+      pageSize: production.pageSize,
+      showPageNumbers: production.showPageNumbers,
     });
   };
 
@@ -137,6 +128,9 @@ export default function TherapeuticActivityGenerator() {
             </div>
           </div>
 
+          {/* Production Controls */}
+          <ProductionControls settings={production} onChange={setProduction} />
+
           <Button
             onClick={handleGenerate}
             disabled={isGenerating}
@@ -165,6 +159,7 @@ export default function TherapeuticActivityGenerator() {
               isGenerating={isGenerating}
               progress={progress}
               onCancel={cancelJob}
+              autoUpscale={production.autoUpscale}
               productMeta={{
                 title: `Therapeutic ${activityType} - ${target}`,
                 type: "Therapeutic Activity",

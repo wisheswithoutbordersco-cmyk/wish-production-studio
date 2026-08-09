@@ -6,42 +6,26 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { GenerationProgress } from "@/components/GenerationProgress";
 import { useGenerationJob } from "@/hooks/useGenerationJob";
+import { ProductionControls, DEFAULT_PRODUCTION_SETTINGS, type ProductionSettings } from "@/components/ProductionControls";
 import { TreePine, Sparkles } from "lucide-react";
 
 const ACTIVITY_TYPES = [
-  "Scavenger Hunt",
-  "Nature Journal",
-  "Outdoor Math",
-  "Seasonal Explorer",
-  "Bird/Plant ID Guide",
-  "Weather Tracker",
-  "Garden Planner",
+  "Scavenger Hunt", "Nature Journal", "Outdoor Math",
+  "Seasonal Explorer", "Bird/Plant ID Guide", "Weather Tracker", "Garden Planner",
 ];
 
 const SEASONS = ["Spring", "Summer", "Fall", "Winter", "All Seasons"];
 
 const BIOMES = [
-  "Backyard",
-  "Forest/Woodland",
-  "Beach/Coastal",
-  "Desert",
-  "Mountain",
-  "Wetland/Pond",
-  "Urban Park",
-  "Prairie/Grassland",
+  "Backyard", "Forest/Woodland", "Beach/Coastal", "Desert",
+  "Mountain", "Wetland/Pond", "Urban Park", "Prairie/Grassland",
 ];
 
 const AGE_RANGES = ["3-5", "5-7", "7-9", "9-12"];
 
 const CULTURAL_CONNECTIONS = [
-  "None",
-  "African",
-  "Indigenous/Native American",
-  "East Asian",
-  "South Asian",
-  "Latin American",
-  "Caribbean",
-  "Pacific Islander",
+  "None", "African", "Indigenous/Native American", "East Asian",
+  "South Asian", "Latin American", "Caribbean", "Pacific Islander",
 ];
 
 export default function OutdoorLearningGenerator() {
@@ -51,6 +35,7 @@ export default function OutdoorLearningGenerator() {
   const [ageRange, setAgeRange] = useState("5-7");
   const [culturalConnection, setCulturalConnection] = useState("None");
   const [pageCount, setPageCount] = useState([8]);
+  const [production, setProduction] = useState<ProductionSettings>(DEFAULT_PRODUCTION_SETTINGS);
 
   const { jobState, isGenerating, progress, startJob, cancelJob } = useGenerationJob();
 
@@ -62,6 +47,9 @@ export default function OutdoorLearningGenerator() {
       ageRange,
       culturalConnection,
       pageCount: pageCount[0],
+      branding: production.branding,
+      pageSize: production.pageSize,
+      showPageNumbers: production.showPageNumbers,
     });
   };
 
@@ -154,6 +142,9 @@ export default function OutdoorLearningGenerator() {
             </div>
           </div>
 
+          {/* Production Controls */}
+          <ProductionControls settings={production} onChange={setProduction} />
+
           <Button
             onClick={handleGenerate}
             disabled={isGenerating}
@@ -182,6 +173,7 @@ export default function OutdoorLearningGenerator() {
               isGenerating={isGenerating}
               progress={progress}
               onCancel={cancelJob}
+              autoUpscale={production.autoUpscale}
               productMeta={{
                 title: `Outdoor ${activityType} - ${biome} (${season})`,
                 type: "Outdoor Learning",

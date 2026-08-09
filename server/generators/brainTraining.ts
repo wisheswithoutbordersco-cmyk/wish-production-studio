@@ -2,7 +2,7 @@
  * Brain Training Generator
  * Generates bilateral coordination, stroke practice, and fine motor skills worksheets.
  */
-import { buildImagePrompt, generatePageImage, processChunk } from "./shared";
+import { buildImagePrompt, generatePageImage, processChunk, getPdfOptionsFromJob } from "./shared";
 import { createJob, getJob, updateJob, addPageResult, type GenerationJob, type PageResult } from "../jobs";
 import { assemblePdf, fetchImageBuffer, PageContent } from "../pdfAssembly";
 import { storagePut } from "../storage";
@@ -176,19 +176,22 @@ async function finalizeBrainTrainingPdf(job: GenerationJob): Promise<void> {
       });
     }
 
-    const pdfBuffer = await assemblePdf(pageContents);
+    const pdfOptions = getPdfOptionsFromJob(job);
+    const pdfBuffer = await assemblePdf(pageContents, pdfOptions);
     const { url: pdfUrl } = await storagePut(
       `products/${job.generatorType}/${job.filename}`,
       pdfBuffer,
       "application/pdf"
     );
     const coverUrl = successPages[0]?.imageUrl || null;
+    const imageUrls = successPages.map(p => p.imageUrl).filter(Boolean);
 
     updateJob(job.id, {
       status: successPages.length === job.totalPages ? "complete" : "partial",
       pdfUrl,
       coverImageUrl: coverUrl,
       statusMessage: "PDF ready for download!",
+      options: { ...job.options, _imageUrls: imageUrls },
     });
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : "PDF assembly failed";

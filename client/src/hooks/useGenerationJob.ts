@@ -23,6 +23,10 @@ export interface JobState {
   statusMessage: string;
   errorMessage: string | null;
   variantJobs?: Array<{ variant: string; jobId: string; status: string }>;
+  // Upgrade 3: Individual PNG URLs
+  imageUrls?: string[];
+  // Upgrade 5: Generation metadata
+  metadata?: Record<string, any> | null;
 }
 
 interface UseGenerationJobReturn {
@@ -98,6 +102,8 @@ export function useGenerationJob(): UseGenerationJobReturn {
         filename: "",
         statusMessage: "Starting generation...",
         errorMessage: null,
+        imageUrls: [],
+        metadata: null,
       });
 
       // Begin polling after a short delay
@@ -115,6 +121,8 @@ export function useGenerationJob(): UseGenerationJobReturn {
         filename: "",
         statusMessage: "",
         errorMessage: error instanceof Error ? error.message : "Failed to start generation",
+        imageUrls: [],
+        metadata: null,
       });
     }
   }, [pollJob]);

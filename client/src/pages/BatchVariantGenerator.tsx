@@ -7,24 +7,15 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { GenerationProgress } from "@/components/GenerationProgress";
 import { useGenerationJob } from "@/hooks/useGenerationJob";
+import { ProductionControls, DEFAULT_PRODUCTION_SETTINGS, type ProductionSettings } from "@/components/ProductionControls";
 import { Copy, Sparkles } from "lucide-react";
 
 const BASE_PRODUCT_TYPES = [
-  "Brain Training",
-  "Cultural Game",
-  "Flashcard",
-  "Worksheet",
-  "Outdoor Learning",
-  "Therapeutic Activity",
+  "Brain Training", "Cultural Game", "Flashcard",
+  "Worksheet", "Outdoor Learning", "Therapeutic Activity",
 ];
 
-const VARIANT_TYPES = [
-  "Cultural",
-  "Theme",
-  "Age",
-  "Difficulty",
-  "Seasonal",
-];
+const VARIANT_TYPES = ["Cultural", "Theme", "Age", "Difficulty", "Seasonal"];
 
 const VARIANT_DESCRIPTIONS: Record<string, string> = {
   "Cultural": "African, Caribbean, South Asian, East Asian, Latin American, Middle Eastern",
@@ -39,6 +30,7 @@ export default function BatchVariantGenerator() {
   const [baseConcept, setBaseConcept] = useState("");
   const [variantType, setVariantType] = useState("Cultural");
   const [pagesPerVariant, setPagesPerVariant] = useState([5]);
+  const [production, setProduction] = useState<ProductionSettings>(DEFAULT_PRODUCTION_SETTINGS);
 
   const { jobState, isGenerating, progress, startJob, cancelJob } = useGenerationJob();
 
@@ -48,6 +40,9 @@ export default function BatchVariantGenerator() {
       baseConcept,
       variantType,
       pagesPerVariant: pagesPerVariant[0],
+      branding: production.branding,
+      pageSize: production.pageSize,
+      showPageNumbers: production.showPageNumbers,
     });
   };
 
@@ -123,6 +118,9 @@ export default function BatchVariantGenerator() {
             <p>{pagesPerVariant[0]} pages each = ~{(VARIANT_DESCRIPTIONS[variantType]?.split(", ").length || 5) * pagesPerVariant[0]} total pages</p>
           </div>
 
+          {/* Production Controls */}
+          <ProductionControls settings={production} onChange={setProduction} />
+
           <Button
             onClick={handleGenerate}
             disabled={isGenerating}
@@ -152,6 +150,7 @@ export default function BatchVariantGenerator() {
                 isGenerating={isGenerating}
                 progress={progress}
                 onCancel={cancelJob}
+                autoUpscale={production.autoUpscale}
               />
               {/* Variant-specific progress */}
               {jobState?.variantJobs && jobState.variantJobs.length > 0 && (

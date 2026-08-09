@@ -9,6 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { BookOpen, Sparkles } from "lucide-react";
 import { useGenerationJob } from "@/hooks/useGenerationJob";
 import { GenerationProgress } from "@/components/GenerationProgress";
+import { ProductionControls, DEFAULT_PRODUCTION_SETTINGS, type ProductionSettings } from "@/components/ProductionControls";
 
 const SUBJECTS = [
   "Math", "Reading", "Writing", "Science", "Social Studies",
@@ -34,6 +35,7 @@ export default function WorkbookGenerator() {
   const [authorName, setAuthorName] = useState("Wishes Without Borders Co");
   const [includeAnswerKey, setIncludeAnswerKey] = useState(true);
   const [includeLicensePage, setIncludeLicensePage] = useState(true);
+  const [production, setProduction] = useState<ProductionSettings>(DEFAULT_PRODUCTION_SETTINGS);
 
   const { jobState, isGenerating, progress, startJob, cancelJob } = useGenerationJob();
 
@@ -47,6 +49,9 @@ export default function WorkbookGenerator() {
       authorName,
       includeAnswerKey,
       includeLicensePage,
+      branding: production.branding,
+      pageSize: production.pageSize,
+      showPageNumbers: production.showPageNumbers,
     });
   };
 
@@ -143,6 +148,9 @@ export default function WorkbookGenerator() {
             <Switch checked={includeLicensePage} onCheckedChange={setIncludeLicensePage} />
           </div>
 
+          {/* Production Controls (Upgrades 1, 2, 4, 6) */}
+          <ProductionControls settings={production} onChange={setProduction} />
+
           <Button
             onClick={handleGenerate}
             disabled={isGenerating}
@@ -172,6 +180,7 @@ export default function WorkbookGenerator() {
               isGenerating={isGenerating}
               progress={progress}
               onCancel={cancelJob}
+              autoUpscale={production.autoUpscale}
               productMeta={{
                 title: `${coverTitle || subject + " Workbook"} (${gradeLevel})`,
                 type: "Workbook",

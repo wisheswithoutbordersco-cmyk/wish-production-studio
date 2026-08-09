@@ -13,3 +13,6 @@ export * from "./outdoorLearning";
 export * from "./therapeuticActivity";
 export * from "./batchVariant";
 export * from "./shared";
+
+// Upgrade 6: AI Upscaler
+export * from "./replicateUpscale";

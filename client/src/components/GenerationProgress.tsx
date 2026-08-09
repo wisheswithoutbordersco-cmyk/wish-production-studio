@@ -1,11 +1,12 @@
 /**
  * Shared progress display component for all generator tabs.
- * Shows generation progress, page thumbnails, download button, and save to library.
+ * Shows generation progress, page thumbnails, download buttons (PDF + PNG), and save to library.
+ * Supports auto-upscale (Upgrade 6).
  */
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Download, Loader2, CheckCircle, AlertCircle, FileText, Library } from "lucide-react";
+import { Download, Loader2, CheckCircle, AlertCircle, FileText, Library, ZoomIn, Image } from "lucide-react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import type { JobState } from "@/hooks/useGenerationJob";
@@ -15,6 +16,7 @@ interface GenerationProgressProps {
   isGenerating: boolean;
   progress: number;
   onCancel?: () => void;
+  autoUpscale?: boolean;
   productMeta?: {
     title: string;
     type: string;
@@ -25,8 +27,10 @@ interface GenerationProgressProps {
   };
 }
 
-export function GenerationProgress({ jobState, isGenerating, progress, onCancel, productMeta }: GenerationProgressProps) {
+export function GenerationProgress({ jobState, isGenerating, progress, onCancel, autoUpscale, productMeta }: GenerationProgressProps) {
   const [saved, setSaved] = useState(false);
+  const [upscaling, setUpscaling] = useState(false);
+  const [upscaledUrl, setUpscaledUrl] = useState<string | null>(null);
   const createProduct = trpc.products.create.useMutation({
     onSuccess: () => {
       setSaved(true);
@@ -52,6 +56,39 @@ export function GenerationProgress({ jobState, isGenerating, progress, onCancel,
       pageCount: productMeta.pageCount || jobState.totalPages,
     });
   };
+
+  // Auto-upscale trigger when job completes
+  const handleUpscale = async () => {
+    const imageUrl = jobState?.imageUrls?.[0] || jobState?.coverImageUrl;
+    if (!imageUrl) return;
+
+    setUpscaling(true);
+    try {
+      const response = await fetch("/api/enhance/true-upscale", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageUrl }),
+      });
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.error || "Upscale failed");
+      }
+      const data = await response.json();
+      setUpscaledUrl(data.imageUrl);
+      toast.success("Image upscaled to 4x resolution!");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Upscale failed");
+    } finally {
+      setUpscaling(false);
+    }
+  };
+
+  // Auto-trigger upscale when job completes and autoUpscale is enabled
+  const shouldAutoUpscale = autoUpscale && jobState?.status === "complete" && !upscaledUrl && !upscaling;
+  if (shouldAutoUpscale) {
+    // Trigger once via setTimeout to avoid render-loop
+    setTimeout(() => handleUpscale(), 100);
+  }
 
   return (
     <div className="space-y-4">
@@ -113,6 +150,14 @@ export function GenerationProgress({ jobState, isGenerating, progress, onCancel,
         </div>
       )}
 
+      {/* Upscaling status */}
+      {upscaling && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <span>Upscaling to 4x resolution...</span>
+        </div>
+      )}
+
       {/* Download and Save buttons */}
       {jobState?.pdfUrl && (
         <div className="flex gap-3 flex-wrap">
@@ -122,12 +167,42 @@ export function GenerationProgress({ jobState, isGenerating, progress, onCancel,
               Download PDF
             </a>
           </Button>
+
+          {/* Upgrade 3: PNG download */}
+          {jobState.imageUrls && jobState.imageUrls.length > 0 && (
+            <Button variant="outline" asChild>
+              <a href={jobState.imageUrls[0]} download>
+                <Image className="h-4 w-4 mr-2" />
+                PNG
+              </a>
+            </Button>
+          )}
+
           <Button variant="outline" asChild>
             <a href={jobState.pdfUrl} target="_blank" rel="noopener noreferrer">
               <FileText className="h-4 w-4 mr-2" />
               Preview
             </a>
           </Button>
+
+          {/* Upgrade 6: Manual upscale button */}
+          {!upscaledUrl && !upscaling && !autoUpscale && (
+            <Button variant="outline" onClick={handleUpscale}>
+              <ZoomIn className="h-4 w-4 mr-2" />
+              Upscale 4x
+            </Button>
+          )}
+
+          {/* Upscaled download */}
+          {upscaledUrl && (
+            <Button variant="outline" asChild>
+              <a href={upscaledUrl} download="upscaled-4x.png">
+                <ZoomIn className="h-4 w-4 mr-2" />
+                Download 4x
+              </a>
+            </Button>
+          )}
+
           {productMeta && !saved && (
             <Button
               variant="secondary"

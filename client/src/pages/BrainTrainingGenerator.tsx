@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { GenerationProgress } from "@/components/GenerationProgress";
 import { useGenerationJob } from "@/hooks/useGenerationJob";
+import { ProductionControls, DEFAULT_PRODUCTION_SETTINGS, type ProductionSettings } from "@/components/ProductionControls";
 import { Brain, Sparkles } from "lucide-react";
 
 const ACTIVITY_TYPES = [
@@ -35,6 +36,7 @@ export default function BrainTrainingGenerator() {
   const [ageRange, setAgeRange] = useState("5-6");
   const [pageCount, setPageCount] = useState([10]);
   const [difficulty, setDifficulty] = useState("Medium");
+  const [production, setProduction] = useState<ProductionSettings>(DEFAULT_PRODUCTION_SETTINGS);
 
   const { jobState, isGenerating, progress, startJob, cancelJob } = useGenerationJob();
 
@@ -46,6 +48,9 @@ export default function BrainTrainingGenerator() {
       ageRange,
       pageCount: pageCount[0],
       difficulty,
+      branding: production.branding,
+      pageSize: production.pageSize,
+      showPageNumbers: production.showPageNumbers,
     });
   };
 
@@ -139,6 +144,9 @@ export default function BrainTrainingGenerator() {
             </div>
           </div>
 
+          {/* Production Controls */}
+          <ProductionControls settings={production} onChange={setProduction} />
+
           <Button
             onClick={handleGenerate}
             disabled={isGenerating}
@@ -168,6 +176,7 @@ export default function BrainTrainingGenerator() {
               isGenerating={isGenerating}
               progress={progress}
               onCancel={cancelJob}
+              autoUpscale={production.autoUpscale}
               productMeta={{
                 title: `Brain Training - ${activityType} (${theme})`,
                 type: "Brain Training",

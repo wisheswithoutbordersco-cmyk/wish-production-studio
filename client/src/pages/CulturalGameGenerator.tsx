@@ -6,47 +6,28 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { GenerationProgress } from "@/components/GenerationProgress";
 import { useGenerationJob } from "@/hooks/useGenerationJob";
+import { ProductionControls, DEFAULT_PRODUCTION_SETTINGS, type ProductionSettings } from "@/components/ProductionControls";
 import { Gamepad2, Sparkles } from "lucide-react";
 
 const GAME_TYPES = [
-  "Trivia Cards",
-  "Party Games",
-  "Conversation Starters",
-  "Quiz Pack",
-  "Bingo",
-  "Would You Rather",
+  "Trivia Cards", "Party Games", "Conversation Starters",
+  "Quiz Pack", "Bingo", "Would You Rather",
 ];
 
 const CULTURAL_EDITIONS = [
-  "African American Heritage",
-  "Caribbean Culture",
-  "Latin American Heritage",
-  "South Asian Culture",
-  "East Asian Heritage",
-  "Middle Eastern Culture",
-  "Indigenous/Native American",
-  "Pan-African",
-  "General Knowledge",
-  "World Cultures Mix",
+  "African American Heritage", "Caribbean Culture", "Latin American Heritage",
+  "South Asian Culture", "East Asian Heritage", "Middle Eastern Culture",
+  "Indigenous/Native American", "Pan-African", "General Knowledge", "World Cultures Mix",
 ];
 
 const OCCASIONS = [
-  "Family Game Night",
-  "Classroom Activity",
-  "Birthday Party",
-  "Holiday Celebration",
-  "Cultural Heritage Month",
-  "Community Event",
-  "Road Trip",
-  "Icebreaker",
+  "Family Game Night", "Classroom Activity", "Birthday Party",
+  "Holiday Celebration", "Cultural Heritage Month", "Community Event",
+  "Road Trip", "Icebreaker",
 ];
 
 const AGE_GROUPS = [
-  "Kids (5-8)",
-  "Tweens (9-12)",
-  "Teens (13-17)",
-  "Family (all ages)",
-  "Adults",
+  "Kids (5-8)", "Tweens (9-12)", "Teens (13-17)", "Family (all ages)", "Adults",
 ];
 
 export default function CulturalGameGenerator() {
@@ -55,6 +36,7 @@ export default function CulturalGameGenerator() {
   const [occasion, setOccasion] = useState("Family Game Night");
   const [cardCount, setCardCount] = useState([20]);
   const [ageAppropriate, setAgeAppropriate] = useState("Family (all ages)");
+  const [production, setProduction] = useState<ProductionSettings>(DEFAULT_PRODUCTION_SETTINGS);
 
   const { jobState, isGenerating, progress, startJob, cancelJob } = useGenerationJob();
 
@@ -65,6 +47,9 @@ export default function CulturalGameGenerator() {
       occasion,
       cardCount: cardCount[0],
       ageAppropriate,
+      branding: production.branding,
+      pageSize: production.pageSize,
+      showPageNumbers: production.showPageNumbers,
     });
   };
 
@@ -145,6 +130,9 @@ export default function CulturalGameGenerator() {
             </div>
           </div>
 
+          {/* Production Controls */}
+          <ProductionControls settings={production} onChange={setProduction} />
+
           <Button
             onClick={handleGenerate}
             disabled={isGenerating}
@@ -173,6 +161,7 @@ export default function CulturalGameGenerator() {
               isGenerating={isGenerating}
               progress={progress}
               onCancel={cancelJob}
+              autoUpscale={production.autoUpscale}
               productMeta={{
                 title: `${gameType} - ${culturalEdition}`,
                 type: "Cultural Game",

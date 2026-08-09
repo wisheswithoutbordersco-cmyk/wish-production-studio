@@ -3,7 +3,7 @@
  * Generates black-and-white line art pages using chunked generation.
  * Output: multi-page PDF with clean line art suitable for coloring.
  */
-import { generatePageImage, processChunk } from "./shared";
+import { generatePageImage, processChunk, getPdfOptionsFromJob } from "./shared";
 import { createJob, getJob, type GenerationJob, type PageResult } from "../jobs";
 
 export interface ColoringBookOptions {
