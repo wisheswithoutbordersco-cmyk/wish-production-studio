@@ -28,7 +28,7 @@ type SizePreset = typeof SIZE_OPTIONS[number]["id"];
 export default function QuickCreateGenerator() {
   const [prompt, setPrompt] = useState("");
   const [pageCount, setPageCount] = useState(5);
-  const [branding, setBranding] = useState<"WishesWithoutBordersCo" | "LaneDigitalWorks" | "off">("WishesWithoutBordersCo");
+  const [branding, setBranding] = useState<"WishesWithoutBordersCo" | "LaneDigitalWorks" | "none">("WishesWithoutBordersCo");
   const [outputStyle, setOutputStyle] = useState<"full-color" | "coloring">("full-color");
   const [sizePreset, setSizePreset] = useState<SizePreset>("8.5x11-portrait");
   const [showPageNumbers, setShowPageNumbers] = useState(true);
@@ -159,7 +159,7 @@ export default function QuickCreateGenerator() {
               {[
                 { id: "WishesWithoutBordersCo", label: "WWB" },
                 { id: "LaneDigitalWorks",       label: "LDW" },
-                { id: "off",                    label: "Off" },
+                { id: "none",                    label: "Off" },
               ].map(opt => (
                 <button
                   key={opt.id}
@@ -180,7 +180,7 @@ export default function QuickCreateGenerator() {
             <div className="flex flex-wrap gap-2">
               {[
                 { id: "on",  label: "On"  },
-                { id: "off", label: "Off" },
+                { id: "none", label: "Off" },
               ].map(opt => (
                 <button
                   key={opt.id}
@@ -201,7 +201,7 @@ export default function QuickCreateGenerator() {
               <Label>4× Upscale <span className="text-white/40 text-xs font-normal">(Real-ESRGAN · slower)</span></Label>
               <div className="flex flex-wrap gap-2">
                 {[
-                  { id: "off", label: "Off" },
+                  { id: "none", label: "Off" },
                   { id: "on",  label: "On"  },
                 ].map(opt => (
                   <button
