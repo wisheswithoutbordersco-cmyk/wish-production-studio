@@ -13,11 +13,45 @@ import {
 import { storagePut } from "../storage";
 import { finalizePdf } from "./shared";
 
+// ─── Branding Types ──────────────────────────────────────────────────────────
+
+export type BrandingOption = "WishesWithoutBordersCo" | "LaneDigitalWorks" | "none";
+
+// ─── Size Presets ─────────────────────────────────────────────────────────────
+
+export type SizePreset =
+  | "8.5x11-portrait"
+  | "8.5x11-landscape"
+  | "11x14"
+  | "16x20"
+  | "square";
+
+interface SizeDimensions {
+  width: number;   // pixels at 300 DPI
+  height: number;  // pixels at 300 DPI
+  label: string;   // human-readable for prompts
+}
+
+const SIZE_PRESETS: Record<SizePreset, SizeDimensions> = {
+  "8.5x11-portrait":  { width: 2550, height: 3300, label: "8.5×11 portrait" },
+  "8.5x11-landscape": { width: 3300, height: 2550, label: "8.5×11 landscape" },
+  "11x14":            { width: 3300, height: 4200, label: "11×14 portrait" },
+  "16x20":            { width: 4800, height: 6000, label: "16×20 portrait" },
+  "square":           { width: 3000, height: 3000, label: "10×10 square" },
+};
+
+function getSizeDimensions(preset: SizePreset): SizeDimensions {
+  return SIZE_PRESETS[preset] || SIZE_PRESETS["8.5x11-portrait"];
+}
+
+// ─── Page Context ─────────────────────────────────────────────────────────────
+
 // Inlined to keep the Railway build self-contained; no separate policy module is required.
 export interface ScriptoriumPageContext {
   prompt: string;
   pageIndex: number;
   totalPages: number;
+  branding: BrandingOption;
 }
 
 export const SCRIPTORIUM_IMAGE_MODEL = "openai/gpt-image-2";
@@ -25,7 +59,21 @@ export const SCRIPTORIUM_IMAGE_MODEL = "openai/gpt-image-2";
 export const SCRIPTORIUM_RENDER_QUALITY =
   "premium professional publishing quality, bold saturated vivid colors, high contrast, a rich vibrant palette, intense clean color separation, crisp clean edges, sharply defined characters and illustrations, refined textures, precise typography, excellent legibility, artifact-free, polished, detailed, and print-ready; avoid beige, cream, muted earth tones, dusty colors, desaturated color, washed-out color, and soft pastel palettes unless the user explicitly requests them";
 
-export const SCRIPTORIUM_SYSTEM_PROMPT = `You are an expert publishing art director and product designer creating prompts for AI image generation of professional printable books, workbooks, journals, planners, trackers, guides, activity products, and other page-based publications.
+// ─── Dynamic System Prompt ────────────────────────────────────────────────────
+
+export function getScriptoriumSystemPrompt(branding: BrandingOption): string {
+  let brandingLine1: string;
+  let brandingLine2: string;
+
+  if (branding === "none") {
+    brandingLine1 = "";
+    brandingLine2 = "\n- Do NOT include any branding text, watermark, or footer text";
+  } else {
+    brandingLine1 = `\n- Footer branding with the exact text "${branding}"`;
+    brandingLine2 = `\n- Always include "${branding}" as small, legible footer branding text`;
+  }
+
+  return `You are an expert publishing art director and product designer creating prompts for AI image generation of professional printable books, workbooks, journals, planners, trackers, guides, activity products, and other page-based publications.
 
 CORE INTENT RULE:
 - The USER REQUEST is authoritative. First infer the exact product type, purpose, structure, tone, intended audience, complexity, and use solely from the user\'s words, then design that product.
@@ -38,8 +86,7 @@ Given the user\'s request, create a detailed image-generation prompt for ONE COM
 - The exact body copy, instructions, prompts, fields, labels, recipes, schedules, stories, lists, or activities needed for that specific page
 - A coordinated visual theme, palette, typography, illustration style, and decorative treatment that matches the request
 - A clear layout describing how every necessary section and content item is arranged
-- Purposeful illustrations, characters, icons, charts, or decorative elements when they support the product
-- Footer branding with the exact text \"WishesWithoutBordersCo\"
+- Purposeful illustrations, characters, icons, charts, or decorative elements when they support the product${brandingLine1}
 
 RULES:
 - Describe ONE complete, flat, full-page image at 8.5x11 inches in portrait orientation
@@ -51,11 +98,14 @@ RULES:
 - Prioritize legibility with strong contrast, generous spacing, clean grouping, and no overlap between text and decorative elements
 - For every full-color page, explicitly demand bold saturated vivid colors, high contrast, and a rich vibrant palette with intense clean color separation. Reject beige, cream, muted earth tones, dusty colors, desaturated or washed-out color, and soft pastel palettes unless the user explicitly requests one of those looks
 - Use premium publishing aesthetics with crisp clean edges, sharply defined characters and illustrations, refined detail, and polished print-ready composition
-- Keep each page visually and substantively unique while maintaining a coherent product-wide style
-- Always include \"WishesWithoutBordersCo\" as small, legible footer branding text
+- Keep each page visually and substantively unique while maintaining a coherent product-wide style${brandingLine2}
 - Do not mention post-production, overlays, editable layers, or adding text later; the generated image itself must be the complete finished page
 
-Return JSON only with this shape: {\"imagePrompt\":\"the complete image-generation prompt\"}.`;
+Return JSON only with this shape: {"imagePrompt":"the complete image-generation prompt"}.`;
+}
+
+// Keep the original const for backward compatibility with other generators that import it.
+export const SCRIPTORIUM_SYSTEM_PROMPT = getScriptoriumSystemPrompt("WishesWithoutBordersCo");
 
 export function buildScriptoriumUserPrompt({
   prompt,
@@ -75,8 +125,16 @@ export function buildScriptoriumFallbackPrompt({
   prompt,
   pageIndex,
   totalPages,
+  branding,
 }: ScriptoriumPageContext): string {
-  return `Create ONE complete, flat, full-page professional publication page based exactly on this request: \"${prompt}\". Infer the product type, audience, complexity, tone, and purpose solely from the user\'s words. This is page ${pageIndex + 1} of ${totalPages}. Preserve the requested product type and use the structure, content, fields, copy, and page conventions that genuinely belong to it. Do not turn the request into a school worksheet, quiz, lesson, math exercise, or answer-blank activity unless the user explicitly requested that format. Use an 8.5x11-inch portrait composition filling the entire canvas edge-to-edge, never a photographed paper, mockup, frame, or page on a background. Render all necessary page text directly in the image with correct spelling and a polished font hierarchy. For a full-color page, use bold saturated vivid colors, high contrast, a rich vibrant palette, and intense clean color separation. Avoid beige, cream, muted earth tones, dusty colors, desaturated or washed-out color, and soft pastel palettes unless the user explicitly requested them. Use crisp typography, clean edges, sharply defined illustrations or characters when appropriate, balanced spacing, and refined subject-relevant visual details. Make the result look like a premium, vibrant, professionally published, print-ready product. Add the exact small footer branding text \"WishesWithoutBordersCo\".`;
+  let brandingSuffix: string;
+  if (branding === "none") {
+    brandingSuffix = " Do NOT include any branding text, watermark, or footer text.";
+  } else {
+    brandingSuffix = ` Add the exact small footer branding text "${branding}".`;
+  }
+
+  return `Create ONE complete, flat, full-page professional publication page based exactly on this request: "${prompt}". Infer the product type, audience, complexity, tone, and purpose solely from the user\'s words. This is page ${pageIndex + 1} of ${totalPages}. Preserve the requested product type and use the structure, content, fields, copy, and page conventions that genuinely belong to it. Do not turn the request into a school worksheet, quiz, lesson, math exercise, or answer-blank activity unless the user explicitly requested that format. Use an 8.5x11-inch portrait composition filling the entire canvas edge-to-edge, never a photographed paper, mockup, frame, or page on a background. Render all necessary page text directly in the image with correct spelling and a polished font hierarchy. For a full-color page, use bold saturated vivid colors, high contrast, a rich vibrant palette, and intense clean color separation. Avoid beige, cream, muted earth tones, dusty colors, desaturated or washed-out color, and soft pastel palettes unless the user explicitly requested them. Use crisp typography, clean edges, sharply defined illustrations or characters when appropriate, balanced spacing, and refined subject-relevant visual details. Make the result look like a premium, vibrant, professionally published, print-ready product.${brandingSuffix}`;
 }
 
 export function buildScriptoriumImageRequest(prompt: string) {
@@ -90,8 +148,6 @@ export function buildScriptoriumImageRequest(prompt: string) {
 }
 
 const PAGES_PER_CHUNK = 1;
-const PAGE_WIDTH = 2550;
-const PAGE_HEIGHT = 3300;
 const MAX_PAGE_COUNT = 30;
 const IMAGE_GENERATION_ATTEMPTS = 3;
 
@@ -111,11 +167,21 @@ export interface QuickCreateOptions {
   prompt?: string;
   customPrompt?: string;
   pageCount: number;
+  branding?: BrandingOption;
+  outputStyle?: "full-color" | "coloring";
+  sizePreset?: SizePreset;
+  showPageNumbers?: boolean;
+  upscale?: boolean;
 }
 
 interface NormalizedOptions {
   prompt: string;
   pageCount: number;
+  branding: BrandingOption;
+  outputStyle: "full-color" | "coloring";
+  sizePreset: SizePreset;
+  showPageNumbers: boolean;
+  upscale: boolean;
 }
 
 interface ImageApiResponse {
@@ -127,10 +193,10 @@ interface ImageApiResponse {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function normalizeOptions(options: QuickCreateOptions): NormalizedOptions {
-  const prompt = (options.prompt || options.customPrompt || "").trim();
+  const rawPrompt = (options.prompt || options.customPrompt || "").trim();
   const pageCount = Number(options.pageCount);
 
-  if (!prompt) throw new Error("Prompt is required");
+  if (!rawPrompt) throw new Error("Prompt is required");
   if (
     !Number.isInteger(pageCount) ||
     pageCount < 1 ||
@@ -139,9 +205,27 @@ function normalizeOptions(options: QuickCreateOptions): NormalizedOptions {
     throw new Error(`Page count must be between 1 and ${MAX_PAGE_COUNT}`);
   }
 
+  const branding: BrandingOption = options.branding || "WishesWithoutBordersCo";
+  const outputStyle = options.outputStyle || "full-color";
+  const sizePreset: SizePreset = options.sizePreset || "8.5x11-portrait";
+  const showPageNumbers = options.showPageNumbers !== false;
+  const upscale = options.upscale === true;
+
+  // If the user selected Coloring output style but the prompt doesn't already
+  // trigger isColoringRequest, prepend a keyword so the coloring-page path fires.
+  let prompt = rawPrompt.slice(0, 2000);
+  if (outputStyle === "coloring" && !isColoringRequest(prompt)) {
+    prompt = `coloring page: ${prompt}`;
+  }
+
   return {
-    prompt: prompt.slice(0, 2000),
+    prompt,
     pageCount,
+    branding,
+    outputStyle,
+    sizePreset,
+    showPageNumbers,
+    upscale,
   };
 }
 
@@ -167,6 +251,77 @@ function wait(milliseconds: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, milliseconds));
 }
 
+// ─── Replicate Real-ESRGAN Upscaler ──────────────────────────────────────────
+
+interface ReplicatePrediction {
+  id: string;
+  status: "starting" | "processing" | "succeeded" | "failed" | "canceled";
+  output?: string | string[];
+  error?: string;
+}
+
+async function upscaleWithRealEsrgan(inputBuffer: Buffer): Promise<Buffer> {
+  const token = process.env.REPLICATE_API_TOKEN;
+  if (!token) {
+    console.warn("REPLICATE_API_TOKEN not set — skipping upscale");
+    return inputBuffer;
+  }
+
+  const b64 = inputBuffer.toString("base64");
+  const dataUri = `data:image/png;base64,${b64}`;
+
+  const createRes = await fetch("https://api.replicate.com/v1/predictions", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      version: "42fed1c4974146d4d2414e2be2c5277c7fcf05fcc3a73abf41610695738c1d7b",
+      input: { image: dataUri, scale: 4 },
+    }),
+  });
+
+  if (!createRes.ok) {
+    const detail = await createRes.text().catch(() => "");
+    throw new Error(`Replicate prediction creation failed (${createRes.status}): ${detail}`);
+  }
+
+  const prediction = (await createRes.json()) as ReplicatePrediction;
+
+  // Poll until complete (max 3 minutes, 5-second intervals)
+  const maxAttempts = 36;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    await wait(5000);
+
+    const pollRes = await fetch(
+      `https://api.replicate.com/v1/predictions/${prediction.id}`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+
+    if (!pollRes.ok) continue;
+
+    const polled = (await pollRes.json()) as ReplicatePrediction;
+
+    if (polled.status === "succeeded") {
+      const outputUrl = Array.isArray(polled.output)
+        ? polled.output[0]
+        : polled.output;
+      if (!outputUrl) throw new Error("Replicate returned no output URL");
+
+      const imgRes = await fetch(outputUrl);
+      if (!imgRes.ok) throw new Error(`Failed to download upscaled image (${imgRes.status})`);
+      return Buffer.from(await imgRes.arrayBuffer());
+    }
+
+    if (polled.status === "failed" || polled.status === "canceled") {
+      throw new Error(`Replicate upscale ${polled.status}: ${polled.error ?? "unknown"}`);
+    }
+  }
+
+  throw new Error("Replicate upscale timed out after 3 minutes");
+}
+
 // ─── Composition Prompt Generation (LLM) ─────────────────────────────────────
 
 async function generatePageComposition(
@@ -174,18 +329,21 @@ async function generatePageComposition(
   pageIndex: number,
   totalPages: number
 ): Promise<PageComposition> {
+  const dims = getSizeDimensions(options.sizePreset);
+
   if (isColoringRequest(options.prompt)) {
     return {
       pageType: "coloring-page",
-      imagePrompt: `Create a black-and-white line-art coloring page based exactly on this request: ${options.prompt}. Infer the intended audience, maturity, complexity, detail, and visual sophistication solely from the user\'s words. Use thick, clean, crisp outlines, no shading, no color, and no background clutter. Center the unique scene on the page with strong contrast and professional vector-like edges. This is page ${pageIndex + 1} of ${totalPages}.`,
+      imagePrompt: `Create a black-and-white line-art coloring page based exactly on this request: ${options.prompt}. Infer the intended audience, maturity, complexity, detail, and visual sophistication solely from the user\'s words. Use thick, clean, crisp outlines, no shading, no color, and no background clutter. Center the unique scene on the page with strong contrast and professional vector-like edges. Compose for a ${dims.label} page. This is page ${pageIndex + 1} of ${totalPages}.`,
     };
   }
 
-  const systemPrompt = SCRIPTORIUM_SYSTEM_PROMPT;
+  const systemPrompt = getScriptoriumSystemPrompt(options.branding);
   const userPrompt = buildScriptoriumUserPrompt({
     prompt: options.prompt,
     pageIndex,
     totalPages,
+    branding: options.branding,
   });
 
   try {
@@ -245,6 +403,7 @@ function buildFallbackComposition(
       prompt: options.prompt,
       pageIndex,
       totalPages,
+      branding: options.branding,
     }),
   };
 }
@@ -300,7 +459,7 @@ async function generateCompositionImage(prompt: string): Promise<Buffer> {
     : new Error("Image generation failed after 3 attempts");
 }
 
-async function generateColoringPage(imagePrompt: string): Promise<Buffer> {
+async function generateColoringPage(imagePrompt: string, dims: SizeDimensions): Promise<Buffer> {
   const coloringPrompt = `${imagePrompt}. Style requirements: pure black-and-white line art coloring page, thick clean outlines only, no shading, no gray tones, no color fills, no background textures, high-contrast black lines on a pure white background, exceptionally crisp vector-like edges, sharply defined subjects, premium professional coloring-book quality suitable for high-resolution printing. Negative requirements: ${COLORING_NEGATIVE_PROMPT}.`;
 
   let rawBuffer: Buffer;
@@ -335,9 +494,9 @@ async function generateColoringPage(imagePrompt: string): Promise<Buffer> {
     .png()
     .toBuffer();
 
-  // Resize to print dimensions
+  // Resize to target print dimensions
   return sharp(cleaned)
-    .resize(PAGE_WIDTH, PAGE_HEIGHT, {
+    .resize(dims.width, dims.height, {
       fit: "fill",
       kernel: sharp.kernel.lanczos3,
     })
@@ -345,11 +504,11 @@ async function generateColoringPage(imagePrompt: string): Promise<Buffer> {
     .toBuffer();
 }
 
-async function generateTextHeavyPage(imagePrompt: string): Promise<Buffer> {
+async function generateTextHeavyPage(imagePrompt: string, dims: SizeDimensions): Promise<Buffer> {
   const rawBuffer = await generateCompositionImage(imagePrompt);
 
   return sharp(rawBuffer)
-    .resize(PAGE_WIDTH, PAGE_HEIGHT, {
+    .resize(dims.width, dims.height, {
       fit: "fill",
       kernel: sharp.kernel.lanczos3,
     })
@@ -365,6 +524,7 @@ async function generateQuickCreatePage(
 ): Promise<PageResult> {
   const options = job.options as unknown as NormalizedOptions;
   const pageNumber = pageIndex + 1;
+  const dims = getSizeDimensions(options.sizePreset);
 
   const composition = await generatePageComposition(
     options,
@@ -372,10 +532,23 @@ async function generateQuickCreatePage(
     job.totalPages
   );
 
-  const finalBuffer =
+  let finalBuffer =
     composition.pageType === "coloring-page"
-      ? await generateColoringPage(composition.imagePrompt)
-      : await generateTextHeavyPage(composition.imagePrompt);
+      ? await generateColoringPage(composition.imagePrompt, dims)
+      : await generateTextHeavyPage(composition.imagePrompt, dims);
+
+  // Optional 4× upscale via Replicate Real-ESRGAN
+  if (options.upscale && process.env.REPLICATE_API_TOKEN) {
+    try {
+      updateJob(job.id, {
+        statusMessage: `Upscaling page ${pageNumber} of ${job.totalPages}...`,
+      });
+      const upscaled = await upscaleWithRealEsrgan(finalBuffer);
+      finalBuffer = await sharp(upscaled).png({ compressionLevel: 9 }).toBuffer();
+    } catch (upscaleError) {
+      console.warn(`Upscale failed for page ${pageNumber}, using original:`, upscaleError);
+    }
+  }
 
   const { url: imageUrl } = await storagePut(
     `pages/quick-create/${job.id}/page-${String(pageNumber).padStart(3, "0")}.png`,
@@ -389,6 +562,34 @@ async function generateQuickCreatePage(
     status: "success",
     metadata: { pageType: composition.pageType },
   };
+}
+
+// ─── Metadata Save ────────────────────────────────────────────────────────────
+
+async function saveJobMetadata(
+  job: GenerationJob,
+  opts: NormalizedOptions,
+  pdfFilename: string
+): Promise<void> {
+  try {
+    const meta = {
+      prompt: opts.prompt,
+      branding: opts.branding,
+      outputStyle: opts.outputStyle,
+      pageCount: opts.pageCount,
+      sizePreset: opts.sizePreset,
+      showPageNumbers: opts.showPageNumbers,
+      upscale: opts.upscale,
+      timestamp: new Date().toISOString(),
+      jobId: job.id,
+    };
+    const metaBuffer = Buffer.from(JSON.stringify(meta, null, 2), "utf-8");
+    const metaKey = `products/quick-create/${pdfFilename.replace(/\.pdf$/, "")}_meta.json`;
+    await storagePut(metaKey, metaBuffer, "application/json");
+  } catch (err) {
+    // Metadata save is non-critical — log and continue
+    console.warn("Failed to save job metadata:", err);
+  }
 }
 
 // ─── Chunk Processing & Job Creation ─────────────────────────────────────────
@@ -431,7 +632,12 @@ async function processQuickCreateChunkInternal(
 
   const updatedJob = getJob(job.id);
   if (updatedJob && updatedJob.nextPageIndex >= updatedJob.totalPages) {
-    await finalizePdf(updatedJob);
+    const opts = updatedJob.options as unknown as NormalizedOptions;
+    await saveJobMetadata(updatedJob, opts, updatedJob.filename);
+    await finalizePdf(updatedJob, {
+      brandingText: opts.branding === "none" ? "off" : opts.branding,
+      showPageNumbers: opts.showPageNumbers,
+    });
   }
 }
 
