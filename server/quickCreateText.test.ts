@@ -2,90 +2,51 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
-  SCRIPTORIUM_CONTENT_MODEL,
+  SCRIPTORIUM_IMAGE_FALLBACK_MODEL,
   SCRIPTORIUM_IMAGE_MODEL,
-  SCRIPTORIUM_WATERMARK,
-  buildScriptoriumBakedTextPrompt,
+  buildScriptoriumFallbackPrompt,
   buildScriptoriumImageRequest,
-  type ScriptoriumPagePlan,
+  getScriptoriumSystemPrompt,
 } from "./generators/quickCreate";
 
-const readSiblingSource = (relativePath: string) =>
-  readFileSync(fileURLToPath(new URL(relativePath, import.meta.url)), "utf8");
+const source = readFileSync(
+  fileURLToPath(new URL("./generators/quickCreate.ts", import.meta.url)),
+  "utf8",
+);
 
-describe("Quick Create complete AI poster rendering", () => {
-  it("uses GPT-4o for content planning and Flux Pro v1.1 Ultra for images", () => {
-    expect(SCRIPTORIUM_CONTENT_MODEL).toBe("openai/gpt-4o");
-    expect(SCRIPTORIUM_IMAGE_MODEL).toBe("fal-ai/flux-pro/v1.1-ultra");
+describe("Scriptorium Quick Create", () => {
+  it("uses GPT Image 2.5 Sunburst for premium publishing images", () => {
+    expect(SCRIPTORIUM_IMAGE_MODEL).toBe("gpt-image-2.5-sunburst");
+
+    const request = buildScriptoriumImageRequest("A polished ocean activity book page");
+    expect(request.model).toBe("gpt-image-2.5-sunburst");
+    expect(request.quality).toBe("high");
+    expect(request.background).toBe("opaque");
   });
 
-  it("places exact titles, facts, descriptions, and watermark in the Flux prompt", () => {
-    const plan: ScriptoriumPagePlan = {
-      title: "10 Ocean Superpowers",
-      subtitle: "Amazing adaptations beneath the waves",
-      sections: [
-        {
-          heading: "Three Hearts",
-          body: "Octopuses have three hearts and blue blood.",
-        },
-        {
-          heading: "Fish & Coral",
-          body: "Clownfish shelter safely among sea anemone tentacles.",
-        },
-      ],
-      footerNote: "OCEAN-TRACE-9472",
-      imagePrompt:
-        "Professional educational infographic poster with two illustrated ocean creature cards and vivid neon reef decorations.",
-    };
+  it("keeps GPT Image 2 as a one-step reliability fallback", () => {
+    expect(SCRIPTORIUM_IMAGE_FALLBACK_MODEL).toBe("gpt-image-2");
+    expect(source).toContain("const IMAGE_MODELS = [SCRIPTORIUM_IMAGE_MODEL, SCRIPTORIUM_IMAGE_FALLBACK_MODEL]");
+    expect(source).toContain("Scriptorium image model ${model} was unavailable");
+  });
 
-    const prompt = buildScriptoriumBakedTextPrompt(plan, {
+  it("preserves complete, text-bearing publication prompt requirements", () => {
+    const prompt = buildScriptoriumFallbackPrompt({
       prompt: "Create an ocean infographic",
       pageIndex: 0,
       totalPages: 1,
+      branding: "WishesWithoutBordersCo",
     });
 
-    expect(prompt).toContain('TITLE: "10 Ocean Superpowers"');
-    expect(prompt).toContain('SECTION 1 HEADING: "Three Hearts"');
-    expect(prompt).toContain(
-      'SECTION 1 BODY: "Octopuses have three hearts and blue blood."'
-    );
-    expect(prompt).toContain('SECTION 2 HEADING: "Fish & Coral"');
-    expect(prompt).toContain('FOOTER NOTE: "OCEAN-TRACE-9472"');
-    expect(prompt).toContain(`WATERMARK: "${SCRIPTORIUM_WATERMARK}"`);
-    expect(prompt).toContain("Render every line in the mandatory text manifest directly inside the artwork");
-    expect(prompt).not.toContain("text-free background");
+    expect(prompt).toContain("Render all necessary page text directly in the image");
+    expect(prompt).toContain("bold saturated vivid colors");
+    expect(prompt).toContain('"WishesWithoutBordersCo"');
+    expect(prompt).toContain("never a photographed paper");
   });
 
-  it("builds a single 3:4 Flux request with baked-in typography", () => {
-    const request = buildScriptoriumImageRequest(
-      'Large title text at top reading exactly "Deep Sea Marvels".'
-    );
-
-    expect(request.model).toBe("fal-ai/flux-pro/v1.1-ultra");
-    expect(request.aspectRatio).toBe("3:4");
-    expect(request.prompt).toContain("Deep Sea Marvels");
-    expect(request.prompt).toContain("baked directly into the illustration");
-    expect(request.prompt).toContain(SCRIPTORIUM_WATERMARK);
-    expect(request.prompt).not.toContain("Do not render any visible words");
-  });
-
-  it("contains no Sharp/SVG text-compositing path", () => {
-    const source = readSiblingSource("./generators/quickCreate.ts");
-
-    expect(source).not.toContain("quickCreateTextOverlay");
-    expect(source).not.toContain("buildQuickCreateTextOverlaySvg");
-    expect(source).not.toContain(".composite(");
-    expect(source).toContain('textRenderer:\n        composition.pageType === "complete-poster"');
-    expect(source).toContain('"flux-pro-ultra-baked-in"');
-    expect(source).toContain("finalizePdf(updatedJob, { addPdfBranding: false })");
-  });
-
-  it("sends only supported Flux Pro Ultra sizing parameters", () => {
-    const source = readSiblingSource("./_core/imageGeneration.ts");
-
-    expect(source).toContain('aspect_ratio: options.aspectRatio || "1:1"');
-    expect(source).not.toContain("num_inference_steps");
-    expect(source).not.toContain("guidance_scale");
-    expect(source).not.toContain("image_size");
+  it("uses the requested branding mode in the art-director system prompt", () => {
+    expect(getScriptoriumSystemPrompt("none")).not.toContain("Footer branding");
+    expect(getScriptoriumSystemPrompt("LaneDigitalWorks"))
+      .toContain('Footer branding with the exact text "LaneDigitalWorks"');
   });
 });

@@ -54,7 +54,12 @@ export interface ScriptoriumPageContext {
   branding: BrandingOption;
 }
 
-export const SCRIPTORIUM_IMAGE_MODEL = "openai/gpt-image-2";
+// Sunburst is the highest-quality GPT Image 2.5 variant and is the right fit
+// for text-heavy, full-color printable publications. Keep GPT Image 2 as a
+// one-step compatibility fallback while the newer model rolls out.
+export const SCRIPTORIUM_IMAGE_MODEL = "gpt-image-2.5-sunburst";
+export const SCRIPTORIUM_IMAGE_FALLBACK_MODEL = "gpt-image-2";
+const IMAGE_MODELS = [SCRIPTORIUM_IMAGE_MODEL, SCRIPTORIUM_IMAGE_FALLBACK_MODEL];
 
 export const SCRIPTORIUM_RENDER_QUALITY =
   "premium professional publishing quality, bold saturated vivid colors, high contrast, a rich vibrant palette, intense clean color separation, crisp clean edges, sharply defined characters and illustrations, refined textures, precise typography, excellent legibility, artifact-free, polished, detailed, and print-ready; avoid beige, cream, muted earth tones, dusty colors, desaturated color, washed-out color, and soft pastel palettes unless the user explicitly requests them";
@@ -413,45 +418,49 @@ function buildFallbackComposition(
 async function generateCompositionImage(prompt: string): Promise<Buffer> {
   let lastError: unknown;
 
-  for (let attempt = 1; attempt <= IMAGE_GENERATION_ATTEMPTS; attempt++) {
-    try {
-      const response = await fetch("https://api.openai.com/v1/images/generations", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${ENV.openaiApiKey}`,
-        },
-        body: JSON.stringify({
-          model: "gpt-image-2",
-          prompt: prompt,
-          n: 1,
-          quality: "high",
-          size: "1024x1536",
-        }),
-      });
+  for (const model of IMAGE_MODELS) {
+    for (let attempt = 1; attempt <= IMAGE_GENERATION_ATTEMPTS; attempt++) {
+      try {
+        const response = await fetch("https://api.openai.com/v1/images/generations", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${ENV.openaiApiKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            prompt,
+            n: 1,
+            quality: "high",
+            size: "1024x1536",
+          }),
+        });
 
-      if (!response.ok) {
-        const detail = await response.text().catch(() => "");
-        throw new Error(
-          `Image generation failed (${response.status}): ${detail}`
+        if (!response.ok) {
+          const detail = await response.text().catch(() => "");
+          throw new Error(
+            `${model} image generation failed (${response.status}): ${detail}`
+          );
+        }
+
+        const result = (await response.json()) as ImageApiResponse;
+        const b64 = result.data?.[0]?.b64_json;
+        if (!b64) throw new Error(`${model} returned no image data`);
+
+        return Buffer.from(b64, "base64");
+      } catch (error) {
+        lastError = error;
+        if (attempt === IMAGE_GENERATION_ATTEMPTS) break;
+
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(
+          `${model} composition image attempt ${attempt} of ${IMAGE_GENERATION_ATTEMPTS} failed: ${message}`
         );
+        await wait(1000 * 2 ** (attempt - 1));
       }
-
-      const result = (await response.json()) as ImageApiResponse;
-      const b64 = result.data?.[0]?.b64_json;
-      if (!b64) throw new Error("No image data in response");
-
-      return Buffer.from(b64, "base64");
-    } catch (error) {
-      lastError = error;
-      if (attempt === IMAGE_GENERATION_ATTEMPTS) break;
-
-      const message = error instanceof Error ? error.message : String(error);
-      console.warn(
-        `Composition image attempt ${attempt} of ${IMAGE_GENERATION_ATTEMPTS} failed: ${message}`
-      );
-      await wait(1000 * 2 ** (attempt - 1));
     }
+
+    console.warn(`Scriptorium image model ${model} was unavailable; trying the next supported model.`);
   }
 
   throw lastError instanceof Error
