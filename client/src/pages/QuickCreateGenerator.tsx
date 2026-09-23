@@ -16,20 +16,28 @@ import { Zap, Sparkles, Download } from "lucide-react";
 const PAGE_OPTIONS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30];
 
 const SIZE_OPTIONS = [
-  { id: "8.5x11-portrait",  label: "8.5×11 Portrait",  aspectHint: "portrait" },
-  { id: "8.5x11-landscape", label: "8.5×11 Landscape", aspectHint: "landscape" },
-  { id: "11x14",            label: "11×14",             aspectHint: "portrait" },
-  { id: "16x20",            label: "16×20",             aspectHint: "portrait" },
-  { id: "10x10-square",     label: "Square (10×10)",    aspectHint: "square" },
+  { id: "8.5x11-portrait", label: "8.5×11 Portrait", aspectHint: "portrait" },
+  {
+    id: "8.5x11-landscape",
+    label: "8.5×11 Landscape",
+    aspectHint: "landscape",
+  },
+  { id: "11x14", label: "11×14", aspectHint: "portrait" },
+  { id: "16x20", label: "16×20", aspectHint: "portrait" },
+  { id: "10x10-square", label: "Square (10×10)", aspectHint: "square" },
 ] as const;
 
-type SizePreset = typeof SIZE_OPTIONS[number]["id"];
+type SizePreset = (typeof SIZE_OPTIONS)[number]["id"];
 
 export default function QuickCreateGenerator() {
   const [prompt, setPrompt] = useState("");
   const [pageCount, setPageCount] = useState(5);
-  const [branding, setBranding] = useState<"WishesWithoutBordersCo" | "LaneDigitalWorks" | "none">("none");
-  const [outputStyle, setOutputStyle] = useState<"full-color" | "coloring">("full-color");
+  const [branding, setBranding] = useState<
+    "WishesWithoutBordersCo" | "LaneDigitalWorks" | "none"
+  >("none");
+  const [outputStyle, setOutputStyle] = useState<"full-color" | "coloring">(
+    "full-color"
+  );
   const [sizePreset, setSizePreset] = useState<SizePreset>("8.5x11-portrait");
   const [showPageNumbers, setShowPageNumbers] = useState(false);
   const [upscale, setUpscale] = useState(true);
@@ -46,14 +54,16 @@ export default function QuickCreateGenerator() {
   // If the endpoint doesn't exist the toggle stays visible (safe default).
   useEffect(() => {
     fetch("/api/env-flags")
-      .then(r => r.ok ? r.json() : null)
+      .then(r => (r.ok ? r.json() : null))
       .then((data: { replicateEnabled?: boolean } | null) => {
         if (data && data.replicateEnabled === false) {
           setReplicateAvailable(false);
           setUpscale(false);
         }
       })
-      .catch(() => {/* endpoint absent — keep toggle visible */});
+      .catch(() => {
+        /* endpoint absent — keep toggle visible */
+      });
   }, []);
 
   const handleGenerate = () => {
@@ -75,19 +85,15 @@ export default function QuickCreateGenerator() {
       ?.filter(r => r.status === "success" && r.imageUrl)
       .map(r => ({ pageNumber: r.pageNumber, url: r.imageUrl })) ?? [];
 
-  const toggleBtnClass = (active: boolean) =>
-    `px-3 py-2 rounded-md text-sm font-medium transition-colors border ${
-      active
-        ? "bg-white text-black border-white"
-        : "bg-transparent text-white/70 border-white/20 hover:border-white/50 hover:text-white"
-    } disabled:opacity-50 disabled:cursor-not-allowed`;
+  const toggleBtnClass =
+    "studio-choice px-3 py-2 rounded-md text-sm font-medium transition-colors border disabled:opacity-50 disabled:cursor-not-allowed";
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <Card className="border-border/50 bg-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Zap className="h-5 w-5 text-yellow-400" />
+            <Zap className="h-5 w-5 text-primary" />
             Quick Create
           </CardTitle>
           <CardDescription>
@@ -96,7 +102,6 @@ export default function QuickCreateGenerator() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
-
           {/* Prompt */}
           <div className="space-y-2">
             <Label htmlFor="quick-prompt" className="text-sm font-medium">
@@ -109,7 +114,7 @@ export default function QuickCreateGenerator() {
               placeholder="e.g. A vibrant Mediterranean recipe book..."
               disabled={isGenerating}
               rows={5}
-              className="min-h-32 resize-y border-white/15 bg-black text-white placeholder:text-white/40 focus-visible:border-white/40 focus-visible:ring-white/10"
+              className="min-h-32 resize-y border-input bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/20"
             />
           </div>
 
@@ -119,14 +124,15 @@ export default function QuickCreateGenerator() {
             <div className="flex flex-wrap gap-2">
               {[
                 { id: "full-color", label: "Full color" },
-                { id: "coloring",   label: "Coloring" },
+                { id: "coloring", label: "Coloring" },
               ].map(opt => (
                 <button
                   key={opt.id}
                   type="button"
                   onClick={() => setOutputStyle(opt.id as any)}
                   disabled={isGenerating}
-                  className={toggleBtnClass(outputStyle === opt.id)}
+                  aria-pressed={outputStyle === opt.id}
+                  className={toggleBtnClass}
                 >
                   {opt.label}
                 </button>
@@ -144,7 +150,8 @@ export default function QuickCreateGenerator() {
                   type="button"
                   onClick={() => setSizePreset(opt.id)}
                   disabled={isGenerating}
-                  className={toggleBtnClass(sizePreset === opt.id)}
+                  aria-pressed={sizePreset === opt.id}
+                  className={toggleBtnClass}
                 >
                   {opt.label}
                 </button>
@@ -158,15 +165,16 @@ export default function QuickCreateGenerator() {
             <div className="flex flex-wrap gap-2">
               {[
                 { id: "WishesWithoutBordersCo", label: "WWB" },
-                { id: "LaneDigitalWorks",       label: "LDW" },
-                { id: "none",                    label: "Off" },
+                { id: "LaneDigitalWorks", label: "LDW" },
+                { id: "none", label: "Off" },
               ].map(opt => (
                 <button
                   key={opt.id}
                   type="button"
                   onClick={() => setBranding(opt.id as any)}
                   disabled={isGenerating}
-                  className={toggleBtnClass(branding === opt.id)}
+                  aria-pressed={branding === opt.id}
+                  className={toggleBtnClass}
                 >
                   {opt.label}
                 </button>
@@ -179,7 +187,7 @@ export default function QuickCreateGenerator() {
             <Label>Page Numbers</Label>
             <div className="flex flex-wrap gap-2">
               {[
-                { id: "on",  label: "On"  },
+                { id: "on", label: "On" },
                 { id: "none", label: "Off" },
               ].map(opt => (
                 <button
@@ -187,7 +195,8 @@ export default function QuickCreateGenerator() {
                   type="button"
                   onClick={() => setShowPageNumbers(opt.id === "on")}
                   disabled={isGenerating}
-                  className={toggleBtnClass(showPageNumbers === (opt.id === "on"))}
+                  aria-pressed={showPageNumbers === (opt.id === "on")}
+                  className={toggleBtnClass}
                 >
                   {opt.label}
                 </button>
@@ -198,18 +207,24 @@ export default function QuickCreateGenerator() {
           {/* 4x Upscale Toggle — only shown when Replicate is configured */}
           {replicateAvailable && (
             <div className="space-y-2">
-              <Label>4× Upscale <span className="text-white/40 text-xs font-normal">(Real-ESRGAN · slower)</span></Label>
+              <Label>
+                4× Upscale{" "}
+                <span className="text-muted-foreground text-xs font-normal">
+                  (Real-ESRGAN · slower)
+                </span>
+              </Label>
               <div className="flex flex-wrap gap-2">
                 {[
                   { id: "none", label: "Off" },
-                  { id: "on",  label: "On"  },
+                  { id: "on", label: "On" },
                 ].map(opt => (
                   <button
                     key={opt.id}
                     type="button"
                     onClick={() => setUpscale(opt.id === "on")}
                     disabled={isGenerating}
-                    className={toggleBtnClass(upscale === (opt.id === "on"))}
+                    aria-pressed={upscale === (opt.id === "on")}
+                    className={toggleBtnClass}
                   >
                     {opt.label}
                   </button>
@@ -228,7 +243,8 @@ export default function QuickCreateGenerator() {
                   type="button"
                   onClick={() => setPageCount(n)}
                   disabled={isGenerating}
-                  className={toggleBtnClass(pageCount === n)}
+                  aria-pressed={pageCount === n}
+                  className={toggleBtnClass}
                 >
                   {n}
                 </button>
@@ -280,8 +296,8 @@ export default function QuickCreateGenerator() {
 
               {/* Individual PNG download buttons — shown once pages start completing */}
               {pngUrls.length > 0 && (
-                <div className="space-y-2 pt-2 border-t border-white/10">
-                  <p className="text-xs text-white/50 font-medium uppercase tracking-wide">
+                <div className="space-y-2 pt-2 border-t border-border">
+                  <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
                     Download PNGs
                   </p>
                   <div className="flex flex-wrap gap-2">
@@ -292,7 +308,7 @@ export default function QuickCreateGenerator() {
                         download={`page-${String(pageNumber).padStart(3, "0")}.png`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium border border-white/20 text-white/70 hover:border-white/50 hover:text-white transition-colors"
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium border border-input text-muted-foreground hover:border-primary hover:text-primary focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2 transition-colors"
                       >
                         <Download className="h-3 w-3" />
                         PNG {pageNumber}
@@ -304,7 +320,7 @@ export default function QuickCreateGenerator() {
 
               {/* Prompt recap shown under preview once generation completes */}
               {jobState?.status === "complete" && prompt && (
-                <p className="text-xs text-white/40 italic border-t border-white/10 pt-2 line-clamp-3">
+                <p className="text-xs text-muted-foreground italic border-t border-border pt-2 line-clamp-3">
                   {prompt}
                 </p>
               )}
