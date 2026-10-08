@@ -375,6 +375,73 @@
     color: #d7dee8;
   }
 
+  @media (max-width: 767px) {
+    html,
+    body,
+    #root {
+      background: #020204;
+    }
+
+    body {
+      background-attachment: scroll;
+    }
+
+    .studio-shell {
+      background: #020204;
+    }
+
+    .studio-shell::before,
+    .studio-shell::after {
+      display: none;
+    }
+
+    .studio-header,
+    .studio-logo,
+    .studio-tabs,
+    [data-slot="card"],
+    input,
+    textarea,
+    [data-slot="input"],
+    [data-slot="textarea"],
+    [data-slot="select-trigger"],
+    button[role="combobox"],
+    [data-slot="select-content"],
+    [data-slot="dropdown-menu-content"],
+    [data-slot="popover-content"],
+    [role="listbox"] {
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+    }
+
+    .studio-header {
+      background: #05060a !important;
+    }
+
+    .studio-tabs {
+      background: #0b0c12 !important;
+    }
+
+    [data-slot="card"] {
+      background: #0c0e14 !important;
+    }
+
+    input,
+    textarea,
+    [data-slot="input"],
+    [data-slot="textarea"],
+    [data-slot="select-trigger"],
+    button[role="combobox"] {
+      background: #111318 !important;
+    }
+
+    [data-slot="select-content"],
+    [data-slot="dropdown-menu-content"],
+    [data-slot="popover-content"],
+    [role="listbox"] {
+      background: #07080d !important;
+    }
+  }
+
   @media (min-width: 640px) {
     .container {
       padding-left: 1.5rem;
