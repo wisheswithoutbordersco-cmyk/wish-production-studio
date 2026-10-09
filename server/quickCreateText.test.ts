@@ -4,11 +4,13 @@ import { describe, expect, it } from "vitest";
 import {
   SCRIPTORIUM_IMAGE_FALLBACK_MODEL,
   SCRIPTORIUM_IMAGE_MODEL,
+  buildColoringPagePrompt,
   buildScriptoriumFallbackPrompt,
   buildScriptoriumImageEditFormData,
   buildScriptoriumImageRequest,
   buildReferenceImageInstructions,
   getScriptoriumSystemPrompt,
+  isColoringOutputStyle,
 } from "./generators/quickCreate";
 
 const source = readFileSync(
@@ -17,6 +19,41 @@ const source = readFileSync(
 );
 
 describe("Scriptorium Quick Create", () => {
+  it("uses the selected output style rather than prompt keywords to choose coloring routing", () => {
+    expect(isColoringOutputStyle("full-color")).toBe(false);
+    expect(isColoringOutputStyle("coloring")).toBe(true);
+    expect(isColoringOutputStyle("reference-coloring")).toBe(true);
+    expect(source).not.toContain("isColoringRequest");
+  });
+
+  it("builds source-preserving instructions for photo-to-coloring conversion", () => {
+    const prompt = buildColoringPagePrompt({
+      prompt: "8.5x11, no shading",
+      sizeLabel: "8.5×11 portrait",
+      pageIndex: 0,
+      totalPages: 1,
+      preserveReference: true,
+    });
+
+    expect(prompt).toContain("source image itself");
+    expect(prompt).toContain("not as inspiration for a new scene");
+    expect(prompt).toContain("Preserve the same subject identity");
+    expect(prompt).toContain("Do not add, remove, rearrange, or invent");
+
+    const sourceInstructions = buildReferenceImageInstructions([
+      { data: "AQID", mimeType: "image/jpeg", role: "source-image" },
+    ]);
+    expect(sourceInstructions).toContain("exact source artwork to convert");
+  });
+
+  it("uses the GPT image pipeline for coloring output, with or without a reference", () => {
+    expect(source).toMatch(
+      /const rawBuffer = await generateCompositionImage\(\s*coloringPrompt,\s*referenceImages\s*\);/
+    );
+    expect(source).not.toContain("fal.ai coloring-page generation failed");
+    expect(source).toContain("COLORING_LINE_THRESHOLD = 180");
+  });
+
   it("uses GPT Image 2.5 Sunburst for premium publishing images", () => {
     expect(SCRIPTORIUM_IMAGE_MODEL).toBe("gpt-image-2.5-sunburst");
 

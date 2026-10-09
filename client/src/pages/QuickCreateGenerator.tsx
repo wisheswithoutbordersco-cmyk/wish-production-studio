@@ -35,6 +35,7 @@ const SIZE_OPTIONS = [
 ] as const;
 
 type SizePreset = (typeof SIZE_OPTIONS)[number]["id"];
+type QuickCreateOutputStyle = "full-color" | "coloring" | "reference-coloring";
 
 const MAX_REFERENCE_IMAGES = 4;
 const MAX_SOURCE_IMAGE_BYTES = 25 * 1024 * 1024;
@@ -46,7 +47,8 @@ type ReferenceImageRole =
   | "face-identity"
   | "body-pose"
   | "style-color"
-  | "object-scene";
+  | "object-scene"
+  | "source-image";
 
 interface ReferenceImage {
   id: string;
@@ -149,9 +151,8 @@ export default function QuickCreateGenerator() {
   const [branding, setBranding] = useState<
     "WishesWithoutBordersCo" | "LaneDigitalWorks" | "none"
   >("none");
-  const [outputStyle, setOutputStyle] = useState<"full-color" | "coloring">(
-    "full-color"
-  );
+  const [outputStyle, setOutputStyle] =
+    useState<QuickCreateOutputStyle>("full-color");
   const [sizePreset, setSizePreset] = useState<SizePreset>("8.5x11-portrait");
   const [showPageNumbers, setShowPageNumbers] = useState(false);
   const [upscale, setUpscale] = useState(true);
@@ -231,10 +232,15 @@ export default function QuickCreateGenerator() {
   }, []);
 
   const handleGenerate = () => {
-    if (!prompt.trim()) return;
+    if (!prompt.trim() && outputStyle !== "reference-coloring") return;
+    if (outputStyle === "reference-coloring" && referenceImages.length !== 1) {
+      return;
+    }
     startJob("quick-create", {
-      customPrompt: prompt.trim(),
-      pageCount,
+      customPrompt:
+        prompt.trim() ||
+        "Convert the uploaded source image to a clean printable monochrome coloring page.",
+      pageCount: outputStyle === "reference-coloring" ? 1 : pageCount,
       branding,
       outputStyle,
       sizePreset,
@@ -274,13 +280,19 @@ export default function QuickCreateGenerator() {
           {/* Prompt */}
           <div className="space-y-2">
             <Label htmlFor="quick-prompt" className="text-sm font-medium">
-              What do you want to create?
+              {outputStyle === "reference-coloring"
+                ? "Optional conversion notes"
+                : "What do you want to create?"}
             </Label>
             <Textarea
               id="quick-prompt"
               value={prompt}
               onChange={e => setPrompt(e.target.value)}
-              placeholder="e.g. A vibrant Mediterranean recipe book..."
+              placeholder={
+                outputStyle === "reference-coloring"
+                  ? "Optional: note any details to preserve or simplify..."
+                  : "e.g. A vibrant Mediterranean recipe book..."
+              }
               disabled={isGenerating}
               rows={5}
               className="min-h-32 resize-y border-input bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/20"
@@ -298,21 +310,23 @@ export default function QuickCreateGenerator() {
               </span>
             </div>
             <p className="text-xs text-white/55">
-              Add photos for identity, body/pose, style, or scene guidance.
-              Describe what to keep and what to change in your prompt;
-              references guide every generated page.
+              {outputStyle === "reference-coloring"
+                ? "Upload exactly one image to convert. It will be treated as the source artwork, not loose inspiration, and produce one coloring page."
+                : "Add photos for identity, body/pose, style, or scene guidance. Describe what to keep and what to change in your prompt; references guide every generated page."}
             </p>
             <input
               ref={referenceInputRef}
               id="quick-reference-images"
               type="file"
               accept="image/*"
-              multiple
+              multiple={outputStyle !== "reference-coloring"}
               onChange={handleReferenceUpload}
               disabled={
                 isGenerating ||
                 isPreparingReferences ||
-                referenceImages.length >= MAX_REFERENCE_IMAGES
+                referenceImages.length >= MAX_REFERENCE_IMAGES ||
+                (outputStyle === "reference-coloring" &&
+                  referenceImages.length >= 1)
               }
               className="sr-only"
             />
@@ -323,7 +337,9 @@ export default function QuickCreateGenerator() {
               disabled={
                 isGenerating ||
                 isPreparingReferences ||
-                referenceImages.length >= MAX_REFERENCE_IMAGES
+                referenceImages.length >= MAX_REFERENCE_IMAGES ||
+                (outputStyle === "reference-coloring" &&
+                  referenceImages.length >= 1)
               }
               className="w-full border-dashed border-white/25 bg-transparent text-white/80 hover:bg-white/5 hover:text-white"
             >
@@ -347,8 +363,14 @@ export default function QuickCreateGenerator() {
                     Reference {index + 1} is for…
                   </Label>
                   <Select
-                    value={image.role}
-                    disabled={isGenerating}
+                    value={
+                      outputStyle === "reference-coloring"
+                        ? "source-image"
+                        : image.role
+                    }
+                    disabled={
+                      isGenerating || outputStyle === "reference-coloring"
+                    }
                     onValueChange={value =>
                       setReferenceImages(current =>
                         current.map(item =>
@@ -375,6 +397,9 @@ export default function QuickCreateGenerator() {
                       </SelectItem>
                       <SelectItem value="object-scene">
                         Object / scene
+                      </SelectItem>
+                      <SelectItem value="source-image">
+                        Exact source to convert
                       </SelectItem>
                     </SelectContent>
                   </Select>
@@ -416,11 +441,14 @@ export default function QuickCreateGenerator() {
               {[
                 { id: "full-color", label: "Full color" },
                 { id: "coloring", label: "Coloring" },
+                { id: "reference-coloring", label: "Photo → Coloring" },
               ].map(opt => (
                 <button
                   key={opt.id}
                   type="button"
-                  onClick={() => setOutputStyle(opt.id as any)}
+                  onClick={() =>
+                    setOutputStyle(opt.id as QuickCreateOutputStyle)
+                  }
                   disabled={isGenerating}
                   aria-pressed={outputStyle === opt.id}
                   className={toggleBtnClass}
@@ -526,15 +554,23 @@ export default function QuickCreateGenerator() {
 
           {/* Page Count Buttons */}
           <div className="space-y-2">
-            <Label>Pages: {pageCount}</Label>
+            <Label>
+              Pages: {outputStyle === "reference-coloring" ? 1 : pageCount}
+            </Label>
             <div className="flex flex-wrap gap-2">
               {PAGE_OPTIONS.map(n => (
                 <button
                   key={n}
                   type="button"
                   onClick={() => setPageCount(n)}
-                  disabled={isGenerating}
-                  aria-pressed={pageCount === n}
+                  disabled={
+                    isGenerating || outputStyle === "reference-coloring"
+                  }
+                  aria-pressed={
+                    outputStyle === "reference-coloring"
+                      ? n === 1
+                      : pageCount === n
+                  }
                   className={toggleBtnClass}
                 >
                   {n}
@@ -546,14 +582,20 @@ export default function QuickCreateGenerator() {
           {/* Generate Button */}
           <Button
             onClick={handleGenerate}
-            disabled={isGenerating || isPreparingReferences || !prompt.trim()}
+            disabled={
+              isGenerating ||
+              isPreparingReferences ||
+              (!prompt.trim() && outputStyle !== "reference-coloring") ||
+              (outputStyle === "reference-coloring" &&
+                referenceImages.length !== 1)
+            }
             className="w-full"
             size="lg"
           >
             <Sparkles className="h-4 w-4 mr-2" />
             {isGenerating
               ? "Generating..."
-              : `Generate ${pageCount} Page${pageCount > 1 ? "s" : ""}`}
+              : `Generate ${outputStyle === "reference-coloring" ? 1 : pageCount} Page${outputStyle === "reference-coloring" || pageCount === 1 ? "" : "s"}`}
           </Button>
         </CardContent>
       </Card>
@@ -569,7 +611,11 @@ export default function QuickCreateGenerator() {
           {!jobState && !isGenerating ? (
             <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
               <Zap className="h-12 w-12 mb-3 opacity-30" />
-              <p className="text-sm">Type your prompt and hit Generate</p>
+              <p className="text-sm">
+                {outputStyle === "reference-coloring"
+                  ? "Upload a photo and hit Generate"
+                  : "Type your prompt and hit Generate"}
+              </p>
             </div>
           ) : (
             <>
@@ -581,7 +627,8 @@ export default function QuickCreateGenerator() {
                 productMeta={{
                   title: prompt.slice(0, 60) || "Quick Create",
                   type: "Quick Create",
-                  pageCount,
+                  pageCount:
+                    outputStyle === "reference-coloring" ? 1 : pageCount,
                 }}
               />
 
