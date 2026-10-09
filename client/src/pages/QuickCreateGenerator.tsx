@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -9,27 +9,149 @@ import {
 } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { GenerationProgress } from "@/components/GenerationProgress";
 import { useGenerationJob } from "@/hooks/useGenerationJob";
-import { Zap, Sparkles, Download } from "lucide-react";
+import { Zap, Sparkles, Download, ImagePlus, X } from "lucide-react";
 
 const PAGE_OPTIONS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30];
 
 const SIZE_OPTIONS = [
-  { id: "8.5x11-portrait",  label: "8.5×11 Portrait",  aspectHint: "portrait" },
-  { id: "8.5x11-landscape", label: "8.5×11 Landscape", aspectHint: "landscape" },
-  { id: "11x14",            label: "11×14",             aspectHint: "portrait" },
-  { id: "16x20",            label: "16×20",             aspectHint: "portrait" },
-  { id: "10x10-square",     label: "Square (10×10)",    aspectHint: "square" },
+  { id: "8.5x11-portrait", label: "8.5×11 Portrait", aspectHint: "portrait" },
+  {
+    id: "8.5x11-landscape",
+    label: "8.5×11 Landscape",
+    aspectHint: "landscape",
+  },
+  { id: "11x14", label: "11×14", aspectHint: "portrait" },
+  { id: "16x20", label: "16×20", aspectHint: "portrait" },
+  { id: "10x10-square", label: "Square (10×10)", aspectHint: "square" },
 ] as const;
 
-type SizePreset = typeof SIZE_OPTIONS[number]["id"];
+type SizePreset = (typeof SIZE_OPTIONS)[number]["id"];
+
+const MAX_REFERENCE_IMAGES = 4;
+const MAX_SOURCE_IMAGE_BYTES = 25 * 1024 * 1024;
+const MAX_REFERENCE_IMAGE_BYTES = 3.5 * 1024 * 1024;
+const MAX_REFERENCE_DIMENSION = 2048;
+
+type ReferenceImageRole =
+  | "overall"
+  | "face-identity"
+  | "body-pose"
+  | "style-color"
+  | "object-scene";
+
+interface ReferenceImage {
+  id: string;
+  preview: string;
+  data: string;
+  mimeType: "image/jpeg";
+  role: ReferenceImageRole;
+}
+
+async function prepareReferenceImage(
+  file: File,
+  number: number
+): Promise<ReferenceImage> {
+  if (!file.type.startsWith("image/") || file.type === "image/svg+xml") {
+    throw new Error("Choose a photo or raster image (not SVG).");
+  }
+  if (file.size > MAX_SOURCE_IMAGE_BYTES) {
+    throw new Error("Each source photo must be 25 MB or smaller.");
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.src = objectUrl;
+    await image.decode();
+
+    const scale = Math.min(
+      1,
+      MAX_REFERENCE_DIMENSION /
+        Math.max(image.naturalWidth, image.naturalHeight)
+    );
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Could not prepare this image.");
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+    const compress = (quality: number) =>
+      new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob(
+          result =>
+            result
+              ? resolve(result)
+              : reject(new Error("Could not compress this image.")),
+          "image/jpeg",
+          quality
+        );
+      });
+    let quality = 0.9;
+    let blob = await compress(quality);
+    while (blob.size > MAX_REFERENCE_IMAGE_BYTES && quality > 0.66) {
+      quality -= 0.08;
+      blob = await compress(quality);
+    }
+    if (blob.size > MAX_REFERENCE_IMAGE_BYTES) {
+      throw new Error(
+        "This image is still too large after compression. Try a smaller photo."
+      );
+    }
+    const preview = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () =>
+        typeof reader.result === "string"
+          ? resolve(reader.result)
+          : reject(new Error("Could not read this image."));
+      reader.onerror = () => reject(new Error("Could not read this image."));
+      reader.readAsDataURL(blob);
+    });
+
+    return {
+      id: `${Date.now()}-${number}-${Math.random().toString(36).slice(2)}`,
+      preview,
+      data: preview.split(",", 2)[1] ?? "",
+      mimeType: "image/jpeg",
+      role: "overall",
+    };
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.startsWith("This image is still too large")
+    ) {
+      throw error;
+    }
+    throw new Error(
+      "Could not read this image. Try a JPEG, PNG, or WebP photo."
+    );
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
 
 export default function QuickCreateGenerator() {
   const [prompt, setPrompt] = useState("");
+  const [referenceImages, setReferenceImages] = useState<ReferenceImage[]>([]);
+  const [isPreparingReferences, setIsPreparingReferences] = useState(false);
+  const [referenceError, setReferenceError] = useState<string | null>(null);
+  const referenceInputRef = useRef<HTMLInputElement>(null);
   const [pageCount, setPageCount] = useState(5);
-  const [branding, setBranding] = useState<"WishesWithoutBordersCo" | "LaneDigitalWorks" | "none">("none");
-  const [outputStyle, setOutputStyle] = useState<"full-color" | "coloring">("full-color");
+  const [branding, setBranding] = useState<
+    "WishesWithoutBordersCo" | "LaneDigitalWorks" | "none"
+  >("none");
+  const [outputStyle, setOutputStyle] = useState<"full-color" | "coloring">(
+    "full-color"
+  );
   const [sizePreset, setSizePreset] = useState<SizePreset>("8.5x11-portrait");
   const [showPageNumbers, setShowPageNumbers] = useState(false);
   const [upscale, setUpscale] = useState(true);
@@ -41,19 +163,71 @@ export default function QuickCreateGenerator() {
   const { jobState, isGenerating, progress, startJob, cancelJob } =
     useGenerationJob();
 
+  const handleReferenceUpload = async (
+    event: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const input = event.currentTarget;
+    const files = Array.from(input.files ?? []);
+    input.value = "";
+    if (files.length === 0) return;
+
+    const slots = MAX_REFERENCE_IMAGES - referenceImages.length;
+    if (slots <= 0) {
+      setReferenceError(
+        `You can add up to ${MAX_REFERENCE_IMAGES} reference images.`
+      );
+      return;
+    }
+
+    setIsPreparingReferences(true);
+    setReferenceError(null);
+    const prepared: ReferenceImage[] = [];
+    try {
+      const filesToPrepare = files.slice(0, slots);
+      for (let index = 0; index < filesToPrepare.length; index++) {
+        prepared.push(
+          await prepareReferenceImage(
+            filesToPrepare[index],
+            referenceImages.length + index + 1
+          )
+        );
+      }
+      if (prepared.length > 0) {
+        setReferenceImages(current =>
+          [...current, ...prepared].slice(0, MAX_REFERENCE_IMAGES)
+        );
+      }
+      if (files.length > slots) {
+        setReferenceError(
+          `Only ${slots} more reference image${slots === 1 ? "" : "s"} fit (maximum ${MAX_REFERENCE_IMAGES}).`
+        );
+      }
+    } catch (error) {
+      setReferenceError(
+        error instanceof Error
+          ? error.message
+          : "Could not prepare the selected image."
+      );
+    } finally {
+      setIsPreparingReferences(false);
+    }
+  };
+
   // Check whether Replicate is configured on the server. The endpoint
   // GET /api/env-flags is a lightweight JSON response: { replicateEnabled: bool }.
   // If the endpoint doesn't exist the toggle stays visible (safe default).
   useEffect(() => {
     fetch("/api/env-flags")
-      .then(r => r.ok ? r.json() : null)
+      .then(r => (r.ok ? r.json() : null))
       .then((data: { replicateEnabled?: boolean } | null) => {
         if (data && data.replicateEnabled === false) {
           setReplicateAvailable(false);
           setUpscale(false);
         }
       })
-      .catch(() => {/* endpoint absent — keep toggle visible */});
+      .catch(() => {
+        /* endpoint absent — keep toggle visible */
+      });
   }, []);
 
   const handleGenerate = () => {
@@ -66,6 +240,11 @@ export default function QuickCreateGenerator() {
       sizePreset,
       showPageNumbers,
       upscale,
+      referenceImages: referenceImages.map(({ data, mimeType, role }) => ({
+        data,
+        mimeType,
+        role,
+      })),
     });
   };
 
@@ -96,7 +275,6 @@ export default function QuickCreateGenerator() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
-
           {/* Prompt */}
           <div className="space-y-2">
             <Label htmlFor="quick-prompt" className="text-sm font-medium">
@@ -113,13 +291,135 @@ export default function QuickCreateGenerator() {
             />
           </div>
 
+          {/* Reference Images */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <Label htmlFor="quick-reference-images">
+                Reference images (optional)
+              </Label>
+              <span className="text-xs text-white/45">
+                {referenceImages.length}/{MAX_REFERENCE_IMAGES}
+              </span>
+            </div>
+            <p className="text-xs text-white/55">
+              Add photos for identity, body/pose, style, or scene guidance.
+              Describe what to keep and what to change in your prompt;
+              references guide every generated page.
+            </p>
+            <input
+              ref={referenceInputRef}
+              id="quick-reference-images"
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={handleReferenceUpload}
+              disabled={
+                isGenerating ||
+                isPreparingReferences ||
+                referenceImages.length >= MAX_REFERENCE_IMAGES
+              }
+              className="sr-only"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => referenceInputRef.current?.click()}
+              disabled={
+                isGenerating ||
+                isPreparingReferences ||
+                referenceImages.length >= MAX_REFERENCE_IMAGES
+              }
+              className="w-full border-dashed border-white/25 bg-transparent text-white/80 hover:bg-white/5 hover:text-white"
+            >
+              <ImagePlus className="h-4 w-4 mr-2" />
+              {isPreparingReferences
+                ? "Preparing images…"
+                : "Add reference images"}
+            </Button>
+            {referenceImages.map((image, index) => (
+              <div
+                key={image.id}
+                className="grid grid-cols-[3.5rem_minmax(0,1fr)_2.5rem] items-center gap-3 rounded-lg border border-white/10 p-2"
+              >
+                <img
+                  src={image.preview}
+                  alt={`Reference ${index + 1}`}
+                  className="h-14 w-14 rounded object-cover"
+                />
+                <div className="space-y-1">
+                  <Label className="text-xs text-white/65">
+                    Reference {index + 1} is for…
+                  </Label>
+                  <Select
+                    value={image.role}
+                    disabled={isGenerating}
+                    onValueChange={value =>
+                      setReferenceImages(current =>
+                        current.map(item =>
+                          item.id === image.id
+                            ? { ...item, role: value as ReferenceImageRole }
+                            : item
+                        )
+                      )
+                    }
+                  >
+                    <SelectTrigger className="h-9 border-white/15 bg-black text-white">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="overall">
+                        Overall inspiration
+                      </SelectItem>
+                      <SelectItem value="face-identity">
+                        Face / identity
+                      </SelectItem>
+                      <SelectItem value="body-pose">Body / pose</SelectItem>
+                      <SelectItem value="style-color">
+                        Style / colors
+                      </SelectItem>
+                      <SelectItem value="object-scene">
+                        Object / scene
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`Remove reference ${index + 1}`}
+                  disabled={isGenerating}
+                  onClick={() =>
+                    setReferenceImages(current =>
+                      current.filter(item => item.id !== image.id)
+                    )
+                  }
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+            {referenceError && (
+              <p role="alert" className="text-xs text-red-300">
+                {referenceError}
+              </p>
+            )}
+            <p className="text-[11px] leading-relaxed text-white/40">
+              When you generate, references are sent to the image-generation
+              provider and held temporarily with the active job. Source photos
+              are not saved to the studio’s public image bucket; remove them or
+              leave this screen to clear your local selection. Only use images
+              you have permission to use.
+            </p>
+          </div>
+
           {/* Output Style Toggle */}
           <div className="space-y-2">
             <Label>Output Style</Label>
             <div className="flex flex-wrap gap-2">
               {[
                 { id: "full-color", label: "Full color" },
-                { id: "coloring",   label: "Coloring" },
+                { id: "coloring", label: "Coloring" },
               ].map(opt => (
                 <button
                   key={opt.id}
@@ -158,8 +458,8 @@ export default function QuickCreateGenerator() {
             <div className="flex flex-wrap gap-2">
               {[
                 { id: "WishesWithoutBordersCo", label: "WWB" },
-                { id: "LaneDigitalWorks",       label: "LDW" },
-                { id: "none",                    label: "Off" },
+                { id: "LaneDigitalWorks", label: "LDW" },
+                { id: "none", label: "Off" },
               ].map(opt => (
                 <button
                   key={opt.id}
@@ -179,7 +479,7 @@ export default function QuickCreateGenerator() {
             <Label>Page Numbers</Label>
             <div className="flex flex-wrap gap-2">
               {[
-                { id: "on",  label: "On"  },
+                { id: "on", label: "On" },
                 { id: "none", label: "Off" },
               ].map(opt => (
                 <button
@@ -187,7 +487,9 @@ export default function QuickCreateGenerator() {
                   type="button"
                   onClick={() => setShowPageNumbers(opt.id === "on")}
                   disabled={isGenerating}
-                  className={toggleBtnClass(showPageNumbers === (opt.id === "on"))}
+                  className={toggleBtnClass(
+                    showPageNumbers === (opt.id === "on")
+                  )}
                 >
                   {opt.label}
                 </button>
@@ -198,11 +500,16 @@ export default function QuickCreateGenerator() {
           {/* 4x Upscale Toggle — only shown when Replicate is configured */}
           {replicateAvailable && (
             <div className="space-y-2">
-              <Label>4× Upscale <span className="text-white/40 text-xs font-normal">(Real-ESRGAN · slower)</span></Label>
+              <Label>
+                4× Upscale{" "}
+                <span className="text-white/40 text-xs font-normal">
+                  (Real-ESRGAN · slower)
+                </span>
+              </Label>
               <div className="flex flex-wrap gap-2">
                 {[
                   { id: "none", label: "Off" },
-                  { id: "on",  label: "On"  },
+                  { id: "on", label: "On" },
                 ].map(opt => (
                   <button
                     key={opt.id}
@@ -239,7 +546,7 @@ export default function QuickCreateGenerator() {
           {/* Generate Button */}
           <Button
             onClick={handleGenerate}
-            disabled={isGenerating || !prompt.trim()}
+            disabled={isGenerating || isPreparingReferences || !prompt.trim()}
             className="w-full"
             size="lg"
           >
