@@ -254,19 +254,15 @@ export default function QuickCreateGenerator() {
       ?.filter(r => r.status === "success" && r.imageUrl)
       .map(r => ({ pageNumber: r.pageNumber, url: r.imageUrl })) ?? [];
 
-  const toggleBtnClass = (active: boolean) =>
-    `px-3 py-2 rounded-md text-sm font-medium transition-colors border ${
-      active
-        ? "bg-white text-black border-white"
-        : "bg-transparent text-white/70 border-white/20 hover:border-white/50 hover:text-white"
-    } disabled:opacity-50 disabled:cursor-not-allowed`;
+  const toggleBtnClass =
+    "studio-choice px-3 py-2 rounded-md text-sm font-medium transition-colors border disabled:opacity-50 disabled:cursor-not-allowed";
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <Card className="border-border/50 bg-card">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Zap className="h-5 w-5 text-yellow-400" />
+            <Zap className="h-5 w-5 text-primary" />
             Quick Create
           </CardTitle>
           <CardDescription>
@@ -287,7 +283,7 @@ export default function QuickCreateGenerator() {
               placeholder="e.g. A vibrant Mediterranean recipe book..."
               disabled={isGenerating}
               rows={5}
-              className="min-h-32 resize-y border-white/15 bg-black text-white placeholder:text-white/40 focus-visible:border-white/40 focus-visible:ring-white/10"
+              className="min-h-32 resize-y border-input bg-muted text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/20"
             />
           </div>
 
@@ -426,7 +422,8 @@ export default function QuickCreateGenerator() {
                   type="button"
                   onClick={() => setOutputStyle(opt.id as any)}
                   disabled={isGenerating}
-                  className={toggleBtnClass(outputStyle === opt.id)}
+                  aria-pressed={outputStyle === opt.id}
+                  className={toggleBtnClass}
                 >
                   {opt.label}
                 </button>
@@ -444,7 +441,8 @@ export default function QuickCreateGenerator() {
                   type="button"
                   onClick={() => setSizePreset(opt.id)}
                   disabled={isGenerating}
-                  className={toggleBtnClass(sizePreset === opt.id)}
+                  aria-pressed={sizePreset === opt.id}
+                  className={toggleBtnClass}
                 >
                   {opt.label}
                 </button>
@@ -466,7 +464,8 @@ export default function QuickCreateGenerator() {
                   type="button"
                   onClick={() => setBranding(opt.id as any)}
                   disabled={isGenerating}
-                  className={toggleBtnClass(branding === opt.id)}
+                  aria-pressed={branding === opt.id}
+                  className={toggleBtnClass}
                 >
                   {opt.label}
                 </button>
@@ -487,9 +486,8 @@ export default function QuickCreateGenerator() {
                   type="button"
                   onClick={() => setShowPageNumbers(opt.id === "on")}
                   disabled={isGenerating}
-                  className={toggleBtnClass(
-                    showPageNumbers === (opt.id === "on")
-                  )}
+                  aria-pressed={showPageNumbers === (opt.id === "on")}
+                  className={toggleBtnClass}
                 >
                   {opt.label}
                 </button>
@@ -502,7 +500,7 @@ export default function QuickCreateGenerator() {
             <div className="space-y-2">
               <Label>
                 4× Upscale{" "}
-                <span className="text-white/40 text-xs font-normal">
+                <span className="text-muted-foreground text-xs font-normal">
                   (Real-ESRGAN · slower)
                 </span>
               </Label>
@@ -516,7 +514,8 @@ export default function QuickCreateGenerator() {
                     type="button"
                     onClick={() => setUpscale(opt.id === "on")}
                     disabled={isGenerating}
-                    className={toggleBtnClass(upscale === (opt.id === "on"))}
+                    aria-pressed={upscale === (opt.id === "on")}
+                    className={toggleBtnClass}
                   >
                     {opt.label}
                   </button>
@@ -535,7 +534,8 @@ export default function QuickCreateGenerator() {
                   type="button"
                   onClick={() => setPageCount(n)}
                   disabled={isGenerating}
-                  className={toggleBtnClass(pageCount === n)}
+                  aria-pressed={pageCount === n}
+                  className={toggleBtnClass}
                 >
                   {n}
                 </button>
@@ -587,8 +587,8 @@ export default function QuickCreateGenerator() {
 
               {/* Individual PNG download buttons — shown once pages start completing */}
               {pngUrls.length > 0 && (
-                <div className="space-y-2 pt-2 border-t border-white/10">
-                  <p className="text-xs text-white/50 font-medium uppercase tracking-wide">
+                <div className="space-y-2 pt-2 border-t border-border">
+                  <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
                     Download PNGs
                   </p>
                   <div className="flex flex-wrap gap-2">
@@ -599,7 +599,7 @@ export default function QuickCreateGenerator() {
                         download={`page-${String(pageNumber).padStart(3, "0")}.png`}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium border border-white/20 text-white/70 hover:border-white/50 hover:text-white transition-colors"
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium border border-input text-muted-foreground hover:border-primary hover:text-primary focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2 transition-colors"
                       >
                         <Download className="h-3 w-3" />
                         PNG {pageNumber}
@@ -611,7 +611,7 @@ export default function QuickCreateGenerator() {
 
               {/* Prompt recap shown under preview once generation completes */}
               {jobState?.status === "complete" && prompt && (
-                <p className="text-xs text-white/40 italic border-t border-white/10 pt-2 line-clamp-3">
+                <p className="text-xs text-muted-foreground italic border-t border-border pt-2 line-clamp-3">
                   {prompt}
                 </p>
               )}

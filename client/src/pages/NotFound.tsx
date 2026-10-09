@@ -11,8 +11,8 @@ export default function NotFound() {
   };
 
   return (
-    <div className="flex min-h-screen w-full items-center justify-center bg-black text-white">
-      <Card className="mx-4 w-full max-w-lg border border-[#222222] bg-black shadow-none">
+    <div className="flex min-h-screen w-full items-center justify-center bg-background text-foreground">
+      <Card className="mx-4 w-full max-w-lg border border-border bg-card shadow-none">
         <CardContent className="pt-8 pb-8 text-center">
           <div className="flex justify-center mb-6">
             <div className="relative">
@@ -21,9 +21,9 @@ export default function NotFound() {
             </div>
           </div>
 
-          <h1 className="mb-2 text-4xl font-bold text-white">404</h1>
+          <h1 className="mb-2 text-4xl font-bold text-foreground">404</h1>
 
-          <h2 className="mb-4 text-xl font-semibold text-white">
+          <h2 className="mb-4 text-xl font-semibold text-foreground">
             Page Not Found
           </h2>
 
@@ -39,7 +39,7 @@ export default function NotFound() {
           >
             <Button
               onClick={handleGoHome}
-              className="rounded-lg bg-white px-6 py-2.5 text-black shadow-none transition-colors hover:bg-neutral-200"
+              className="rounded-lg px-6 py-2.5 shadow-none transition-colors"
             >
               <Home className="w-4 h-4 mr-2" />
               Go Home

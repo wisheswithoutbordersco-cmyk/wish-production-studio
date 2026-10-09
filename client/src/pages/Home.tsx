@@ -1,6 +1,21 @@
 import { useState, lazy, Suspense } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Loader2, CreditCard, BookOpen, Palette, Wand2, Brain, Gamepad2, TreePine, Heart, Layers, FileText, Copy, Library, Zap } from "lucide-react";
+import {
+  Loader2,
+  CreditCard,
+  BookOpen,
+  Palette,
+  Wand2,
+  Brain,
+  Gamepad2,
+  TreePine,
+  Heart,
+  Layers,
+  FileText,
+  Copy,
+  Library,
+  Zap,
+} from "lucide-react";
 
 // Lazy load all generator components
 const CardGenerator = lazy(() => import("./CardGenerator"));
@@ -9,8 +24,12 @@ const ColoringBookGenerator = lazy(() => import("./ColoringBookGenerator"));
 const EnhanceTools = lazy(() => import("./EnhanceTools"));
 const BrainTrainingGenerator = lazy(() => import("./BrainTrainingGenerator"));
 const CulturalGameGenerator = lazy(() => import("./CulturalGameGenerator"));
-const OutdoorLearningGenerator = lazy(() => import("./OutdoorLearningGenerator"));
-const TherapeuticActivityGenerator = lazy(() => import("./TherapeuticActivityGenerator"));
+const OutdoorLearningGenerator = lazy(
+  () => import("./OutdoorLearningGenerator")
+);
+const TherapeuticActivityGenerator = lazy(
+  () => import("./TherapeuticActivityGenerator")
+);
 const FlashcardGenerator = lazy(() => import("./FlashcardGenerator"));
 const WorksheetGenerator = lazy(() => import("./WorksheetGenerator"));
 const BatchVariantGenerator = lazy(() => import("./BatchVariantGenerator"));
@@ -45,17 +64,21 @@ export default function Home() {
   const [activeTab, setActiveTab] = useState("quick-create");
 
   return (
-    <div className="studio-shell min-h-screen text-white">
+    <div className="studio-shell min-h-screen text-foreground">
       {/* Header */}
       <header className="studio-header sticky top-0 z-50">
         <div className="container py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="studio-logo flex h-9 w-9 items-center justify-center rounded-xl">
-              <Wand2 className="h-4 w-4 text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.35)]" />
+              <Wand2 className="h-4 w-4 text-primary drop-shadow-[0_0_8px_rgba(123,140,255,0.25)]" />
             </div>
             <div>
-              <h1 className="text-base font-semibold tracking-[-0.025em] text-foreground leading-tight">Production Studio</h1>
-              <p className="text-[11px] text-muted-foreground">Wishes Without Borders Co</p>
+              <h1 className="text-base font-semibold tracking-[-0.025em] text-foreground leading-tight">
+                Production Studio
+              </h1>
+              <p className="text-[11px] text-muted-foreground">
+                Wishes Without Borders Co
+              </p>
             </div>
           </div>
         </div>
@@ -69,6 +92,7 @@ export default function Home() {
               <TabsTrigger
                 key={tab.id}
                 value={tab.id}
+                aria-label={tab.label}
                 className="studio-tab flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs transition-all duration-200"
               >
                 <tab.icon className="h-3.5 w-3.5" />
