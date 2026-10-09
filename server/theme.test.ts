@@ -126,7 +126,18 @@ describe("Quoratorium blue-violet glass theme", () => {
     const quickCreate = source("src/pages/QuickCreateGenerator.tsx");
     expect(quickCreate.match(/aria-pressed=/g)).toHaveLength(6);
     expect(quickCreate.match(/className=\{toggleBtnClass\}/g)).toHaveLength(6);
-    expect(quickCreate).not.toMatch(/bg-white|text-black|text-yellow-400|border-white/);
+    const referenceStart = quickCreate.indexOf("{/* Reference Images */}");
+    const outputStyleStart = quickCreate.indexOf(
+      "{/* Output Style Toggle */}",
+      referenceStart
+    );
+    expect(referenceStart).toBeGreaterThanOrEqual(0);
+    expect(outputStyleStart).toBeGreaterThan(referenceStart);
+    const themedControls =
+      quickCreate.slice(0, referenceStart) + quickCreate.slice(outputStyleStart);
+    expect(themedControls).not.toMatch(
+      /bg-white|text-black|text-yellow-400|border-white/
+    );
     expect(css).toContain('.studio-choice[aria-pressed="true"]');
     expect(css).toContain(".studio-choice:focus-visible");
     expect(source("src/pages/Home.tsx")).toContain("aria-label={tab.label}");

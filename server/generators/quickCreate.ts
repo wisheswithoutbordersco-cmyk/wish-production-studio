@@ -15,7 +15,10 @@ import { finalizePdf } from "./shared";
 
 // ─── Branding Types ──────────────────────────────────────────────────────────
 
-export type BrandingOption = "WishesWithoutBordersCo" | "LaneDigitalWorks" | "none";
+export type BrandingOption =
+  | "WishesWithoutBordersCo"
+  | "LaneDigitalWorks"
+  | "none";
 
 // ─── Size Presets ─────────────────────────────────────────────────────────────
 
@@ -27,17 +30,17 @@ export type SizePreset =
   | "square";
 
 interface SizeDimensions {
-  width: number;   // pixels at 300 DPI
-  height: number;  // pixels at 300 DPI
-  label: string;   // human-readable for prompts
+  width: number; // pixels at 300 DPI
+  height: number; // pixels at 300 DPI
+  label: string; // human-readable for prompts
 }
 
 const SIZE_PRESETS: Record<SizePreset, SizeDimensions> = {
-  "8.5x11-portrait":  { width: 2550, height: 3300, label: "8.5×11 portrait" },
+  "8.5x11-portrait": { width: 2550, height: 3300, label: "8.5×11 portrait" },
   "8.5x11-landscape": { width: 3300, height: 2550, label: "8.5×11 landscape" },
-  "11x14":            { width: 3300, height: 4200, label: "11×14 portrait" },
-  "16x20":            { width: 4800, height: 6000, label: "16×20 portrait" },
-  "square":           { width: 3000, height: 3000, label: "10×10 square" },
+  "11x14": { width: 3300, height: 4200, label: "11×14 portrait" },
+  "16x20": { width: 4800, height: 6000, label: "16×20 portrait" },
+  square: { width: 3000, height: 3000, label: "10×10 square" },
 };
 
 function getSizeDimensions(preset: SizePreset): SizeDimensions {
@@ -59,7 +62,10 @@ export interface ScriptoriumPageContext {
 // one-step compatibility fallback while the newer model rolls out.
 export const SCRIPTORIUM_IMAGE_MODEL = "gpt-image-2.5-sunburst";
 export const SCRIPTORIUM_IMAGE_FALLBACK_MODEL = "gpt-image-2";
-const IMAGE_MODELS = [SCRIPTORIUM_IMAGE_MODEL, SCRIPTORIUM_IMAGE_FALLBACK_MODEL];
+const IMAGE_MODELS = [
+  SCRIPTORIUM_IMAGE_MODEL,
+  SCRIPTORIUM_IMAGE_FALLBACK_MODEL,
+];
 
 export const SCRIPTORIUM_RENDER_QUALITY =
   "premium professional publishing quality, bold saturated vivid colors, high contrast, a rich vibrant palette, intense clean color separation, crisp clean edges, sharply defined characters and illustrations, refined textures, precise typography, excellent legibility, artifact-free, polished, detailed, and print-ready; avoid beige, cream, muted earth tones, dusty colors, desaturated color, washed-out color, and soft pastel palettes unless the user explicitly requests them";
@@ -110,7 +116,9 @@ Return JSON only with this shape: {"imagePrompt":"the complete image-generation 
 }
 
 // Keep the original const for backward compatibility with other generators that import it.
-export const SCRIPTORIUM_SYSTEM_PROMPT = getScriptoriumSystemPrompt("WishesWithoutBordersCo");
+export const SCRIPTORIUM_SYSTEM_PROMPT = getScriptoriumSystemPrompt(
+  "WishesWithoutBordersCo"
+);
 
 export function buildScriptoriumUserPrompt({
   prompt,
@@ -155,6 +163,9 @@ export function buildScriptoriumImageRequest(prompt: string) {
 const PAGES_PER_CHUNK = 1;
 const MAX_PAGE_COUNT = 30;
 const IMAGE_GENERATION_ATTEMPTS = 3;
+const MAX_REFERENCE_IMAGES = 4;
+const MAX_REFERENCE_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_TOTAL_REFERENCE_IMAGE_BYTES = 16 * 1024 * 1024;
 
 const COLORING_NEGATIVE_PROMPT =
   "no text, no words, no letters, no numbers, no writing, no captions, no labels, no watermark, no signature, no blur, no distortion, no artifacts";
@@ -177,6 +188,20 @@ export interface QuickCreateOptions {
   sizePreset?: SizePreset;
   showPageNumbers?: boolean;
   upscale?: boolean;
+  referenceImages?: QuickCreateReferenceImage[];
+}
+
+export type ReferenceImageRole =
+  | "overall"
+  | "face-identity"
+  | "body-pose"
+  | "style-color"
+  | "object-scene";
+
+export interface QuickCreateReferenceImage {
+  data: string;
+  mimeType: "image/jpeg" | "image/png" | "image/webp";
+  role: ReferenceImageRole;
 }
 
 interface NormalizedOptions {
@@ -187,6 +212,7 @@ interface NormalizedOptions {
   sizePreset: SizePreset;
   showPageNumbers: boolean;
   upscale: boolean;
+  referenceImages?: QuickCreateReferenceImage[];
 }
 
 interface ImageApiResponse {
@@ -196,6 +222,86 @@ interface ImageApiResponse {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+const REFERENCE_ROLE_INSTRUCTIONS: Record<ReferenceImageRole, string> = {
+  overall:
+    "Use this as broad visual inspiration, following the user's keep/change instructions.",
+  "face-identity":
+    "Use this as the face/person identity reference. Preserve recognizable facial features, hair, and likeness when requested; do not copy its background or pose unless asked.",
+  "body-pose":
+    "Use this as the body, clothing, or pose reference, preserving only the aspects the user's prompt asks to keep.",
+  "style-color":
+    "Use this for art style, palette, lighting, texture, and visual treatment; do not copy unrelated subjects or layout.",
+  "object-scene":
+    "Use this for the referenced object, subject, or scene elements, incorporating only what the user's prompt requests.",
+};
+
+export function buildReferenceImageInstructions(
+  referenceImages: QuickCreateReferenceImage[]
+): string {
+  if (referenceImages.length === 0) return "";
+
+  const instructions = referenceImages
+    .map(
+      (image, index) =>
+        `- Reference image ${index + 1}: ${REFERENCE_ROLE_INSTRUCTIONS[image.role]}`
+    )
+    .join("\n");
+
+  return `\n\nREFERENCE IMAGE GUIDANCE:\nUse each attached image according to its assigned role. Follow the user's explicit instructions about what to preserve or change above all else.\n${instructions}`;
+}
+
+function normalizeReferenceImages(
+  input: QuickCreateOptions["referenceImages"]
+): QuickCreateReferenceImage[] {
+  if (input === undefined) return [];
+  if (!Array.isArray(input) || input.length > MAX_REFERENCE_IMAGES) {
+    throw new Error(
+      `Use no more than ${MAX_REFERENCE_IMAGES} reference images`
+    );
+  }
+
+  let totalBytes = 0;
+  return input.map((image, index) => {
+    if (!image || typeof image.data !== "string") {
+      throw new Error(`Reference image ${index + 1} is invalid`);
+    }
+    if (!["image/jpeg", "image/png", "image/webp"].includes(image.mimeType)) {
+      throw new Error(
+        `Reference image ${index + 1} must be JPEG, PNG, or WebP`
+      );
+    }
+    if (!Object.hasOwn(REFERENCE_ROLE_INSTRUCTIONS, image.role)) {
+      throw new Error(`Reference image ${index + 1} has an unsupported role`);
+    }
+
+    const data = image.data.trim();
+    const isBase64 =
+      /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+        data
+      );
+    if (!data || !isBase64) {
+      throw new Error(
+        `Reference image ${index + 1} is not valid base64 image data`
+      );
+    }
+
+    const bytes = Buffer.from(data, "base64");
+    if (bytes.length === 0 || bytes.length > MAX_REFERENCE_IMAGE_BYTES) {
+      throw new Error(`Each reference image must be smaller than 5 MB`);
+    }
+    totalBytes += bytes.length;
+    if (totalBytes > MAX_TOTAL_REFERENCE_IMAGE_BYTES) {
+      throw new Error("Reference images together must be smaller than 16 MB");
+    }
+
+    return {
+      data,
+      mimeType: image.mimeType,
+      role: image.role,
+    };
+  });
+}
 
 function normalizeOptions(options: QuickCreateOptions): NormalizedOptions {
   const rawPrompt = (options.prompt || options.customPrompt || "").trim();
@@ -215,6 +321,7 @@ function normalizeOptions(options: QuickCreateOptions): NormalizedOptions {
   const sizePreset: SizePreset = options.sizePreset || "8.5x11-portrait";
   const showPageNumbers = options.showPageNumbers !== false;
   const upscale = options.upscale === true;
+  const referenceImages = normalizeReferenceImages(options.referenceImages);
 
   // If the user selected Coloring output style but the prompt doesn't already
   // trigger isColoringRequest, prepend a keyword so the coloring-page path fires.
@@ -231,6 +338,7 @@ function normalizeOptions(options: QuickCreateOptions): NormalizedOptions {
     sizePreset,
     showPageNumbers,
     upscale,
+    referenceImages,
   };
 }
 
@@ -282,14 +390,17 @@ async function upscaleWithRealEsrgan(inputBuffer: Buffer): Promise<Buffer> {
       Authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({
-      version: "42fed1c4974146d4d2414e2be2c5277c7fcf05fcc3a73abf41610695738c1d7b",
+      version:
+        "42fed1c4974146d4d2414e2be2c5277c7fcf05fcc3a73abf41610695738c1d7b",
       input: { image: dataUri, scale: 4 },
     }),
   });
 
   if (!createRes.ok) {
     const detail = await createRes.text().catch(() => "");
-    throw new Error(`Replicate prediction creation failed (${createRes.status}): ${detail}`);
+    throw new Error(
+      `Replicate prediction creation failed (${createRes.status}): ${detail}`
+    );
   }
 
   const prediction = (await createRes.json()) as ReplicatePrediction;
@@ -315,12 +426,15 @@ async function upscaleWithRealEsrgan(inputBuffer: Buffer): Promise<Buffer> {
       if (!outputUrl) throw new Error("Replicate returned no output URL");
 
       const imgRes = await fetch(outputUrl);
-      if (!imgRes.ok) throw new Error(`Failed to download upscaled image (${imgRes.status})`);
+      if (!imgRes.ok)
+        throw new Error(`Failed to download upscaled image (${imgRes.status})`);
       return Buffer.from(await imgRes.arrayBuffer());
     }
 
     if (polled.status === "failed" || polled.status === "canceled") {
-      throw new Error(`Replicate upscale ${polled.status}: ${polled.error ?? "unknown"}`);
+      throw new Error(
+        `Replicate upscale ${polled.status}: ${polled.error ?? "unknown"}`
+      );
     }
   }
 
@@ -415,26 +529,78 @@ function buildFallbackComposition(
 
 // ─── Image Generation ─────────────────────────────────────────────────────────
 
-async function generateCompositionImage(prompt: string): Promise<Buffer> {
+export function buildScriptoriumImageEditFormData(
+  prompt: string,
+  referenceImages: QuickCreateReferenceImage[],
+  model: string
+): FormData {
+  const formData = new FormData();
+  formData.set("model", model);
+  formData.set(
+    "prompt",
+    `${prompt}${buildReferenceImageInstructions(referenceImages)}`
+  );
+  formData.set("n", "1");
+  formData.set("quality", "high");
+  formData.set("size", "1024x1536");
+  formData.set("background", "opaque");
+  formData.set("output_format", "png");
+
+  for (let index = 0; index < referenceImages.length; index++) {
+    const image = referenceImages[index];
+    const extension =
+      image.mimeType === "image/png"
+        ? "png"
+        : image.mimeType === "image/webp"
+          ? "webp"
+          : "jpg";
+    const imageBytes = Buffer.from(image.data, "base64");
+    formData.append(
+      "image[]",
+      new Blob([new Uint8Array(imageBytes)], { type: image.mimeType }),
+      `reference-${index + 1}.${extension}`
+    );
+  }
+
+  return formData;
+}
+
+async function generateCompositionImage(
+  prompt: string,
+  referenceImages: QuickCreateReferenceImage[] = []
+): Promise<Buffer> {
   let lastError: unknown;
 
   for (const model of IMAGE_MODELS) {
     for (let attempt = 1; attempt <= IMAGE_GENERATION_ATTEMPTS; attempt++) {
       try {
-        const response = await fetch("https://api.openai.com/v1/images/generations", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${ENV.openaiApiKey}`,
-          },
-          body: JSON.stringify({
-            model,
-            prompt,
-            n: 1,
-            quality: "high",
-            size: "1024x1536",
-          }),
-        });
+        const response =
+          referenceImages.length > 0
+            ? await fetch("https://api.openai.com/v1/images/edits", {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${ENV.openaiApiKey}`,
+                },
+                body: buildScriptoriumImageEditFormData(
+                  prompt,
+                  referenceImages,
+                  model
+                ),
+              })
+            : await fetch("https://api.openai.com/v1/images/generations", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization: `Bearer ${ENV.openaiApiKey}`,
+                },
+                body: JSON.stringify({
+                  model,
+                  prompt,
+                  n: 1,
+                  quality: "high",
+                  size: "1024x1536",
+                }),
+              });
 
         if (!response.ok) {
           const detail = await response.text().catch(() => "");
@@ -460,7 +626,9 @@ async function generateCompositionImage(prompt: string): Promise<Buffer> {
       }
     }
 
-    console.warn(`Scriptorium image model ${model} was unavailable; trying the next supported model.`);
+    console.warn(
+      `Scriptorium image model ${model} was unavailable; trying the next supported model.`
+    );
   }
 
   throw lastError instanceof Error
@@ -468,30 +636,38 @@ async function generateCompositionImage(prompt: string): Promise<Buffer> {
     : new Error("Image generation failed after 3 attempts");
 }
 
-async function generateColoringPage(imagePrompt: string, dims: SizeDimensions): Promise<Buffer> {
+async function generateColoringPage(
+  imagePrompt: string,
+  dims: SizeDimensions,
+  referenceImages: QuickCreateReferenceImage[] = []
+): Promise<Buffer> {
   const coloringPrompt = `${imagePrompt}. Style requirements: pure black-and-white line art coloring page, thick clean outlines only, no shading, no gray tones, no color fills, no background textures, high-contrast black lines on a pure white background, exceptionally crisp vector-like edges, sharply defined subjects, premium professional coloring-book quality suitable for high-resolution printing. Negative requirements: ${COLORING_NEGATIVE_PROMPT}.`;
 
   let rawBuffer: Buffer;
-  try {
-    const { url } = await generateImage({
-      prompt: coloringPrompt,
-      aspectRatio: "3:4",
-    });
-    if (!url) throw new Error("fal.ai returned no coloring-page image URL");
+  if (referenceImages.length > 0) {
+    rawBuffer = await generateCompositionImage(coloringPrompt, referenceImages);
+  } else {
+    try {
+      const { url } = await generateImage({
+        prompt: coloringPrompt,
+        aspectRatio: "3:4",
+      });
+      if (!url) throw new Error("fal.ai returned no coloring-page image URL");
 
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(
-        `Failed to download fal.ai coloring page (${response.status})`
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(
+          `Failed to download fal.ai coloring page (${response.status})`
+        );
+      }
+      rawBuffer = Buffer.from(await response.arrayBuffer());
+    } catch (error) {
+      console.warn(
+        "fal.ai coloring-page generation failed; using the high-quality OpenRouter fallback:",
+        error
       );
+      rawBuffer = await generateCompositionImage(coloringPrompt);
     }
-    rawBuffer = Buffer.from(await response.arrayBuffer());
-  } catch (error) {
-    console.warn(
-      "fal.ai coloring-page generation failed; using the high-quality OpenRouter fallback:",
-      error
-    );
-    rawBuffer = await generateCompositionImage(coloringPrompt);
   }
 
   // Post-process to ensure clean B&W output
@@ -513,8 +689,15 @@ async function generateColoringPage(imagePrompt: string, dims: SizeDimensions): 
     .toBuffer();
 }
 
-async function generateTextHeavyPage(imagePrompt: string, dims: SizeDimensions): Promise<Buffer> {
-  const rawBuffer = await generateCompositionImage(imagePrompt);
+async function generateTextHeavyPage(
+  imagePrompt: string,
+  dims: SizeDimensions,
+  referenceImages: QuickCreateReferenceImage[] = []
+): Promise<Buffer> {
+  const rawBuffer = await generateCompositionImage(
+    imagePrompt,
+    referenceImages
+  );
 
   return sharp(rawBuffer)
     .resize(dims.width, dims.height, {
@@ -543,8 +726,16 @@ async function generateQuickCreatePage(
 
   let finalBuffer =
     composition.pageType === "coloring-page"
-      ? await generateColoringPage(composition.imagePrompt, dims)
-      : await generateTextHeavyPage(composition.imagePrompt, dims);
+      ? await generateColoringPage(
+          composition.imagePrompt,
+          dims,
+          options.referenceImages
+        )
+      : await generateTextHeavyPage(
+          composition.imagePrompt,
+          dims,
+          options.referenceImages
+        );
 
   // Optional 4× upscale via Replicate Real-ESRGAN
   if (options.upscale && process.env.REPLICATE_API_TOKEN) {
@@ -553,9 +744,14 @@ async function generateQuickCreatePage(
         statusMessage: `Upscaling page ${pageNumber} of ${job.totalPages}...`,
       });
       const upscaled = await upscaleWithRealEsrgan(finalBuffer);
-      finalBuffer = await sharp(upscaled).png({ compressionLevel: 9 }).toBuffer();
+      finalBuffer = await sharp(upscaled)
+        .png({ compressionLevel: 9 })
+        .toBuffer();
     } catch (upscaleError) {
-      console.warn(`Upscale failed for page ${pageNumber}, using original:`, upscaleError);
+      console.warn(
+        `Upscale failed for page ${pageNumber}, using original:`,
+        upscaleError
+      );
     }
   }
 
@@ -642,11 +838,16 @@ async function processQuickCreateChunkInternal(
   const updatedJob = getJob(job.id);
   if (updatedJob && updatedJob.nextPageIndex >= updatedJob.totalPages) {
     const opts = updatedJob.options as unknown as NormalizedOptions;
-    await saveJobMetadata(updatedJob, opts, updatedJob.filename);
-    await finalizePdf(updatedJob, {
-      addPdfBranding: opts.branding !== "none",
-      showPageNumbers: opts.showPageNumbers,
-    });
+    try {
+      await saveJobMetadata(updatedJob, opts, updatedJob.filename);
+      await finalizePdf(updatedJob, {
+        addPdfBranding: opts.branding !== "none",
+        showPageNumbers: opts.showPageNumbers,
+      });
+    } finally {
+      // Reference photos are held only while the job is generating.
+      delete opts.referenceImages;
+    }
   }
 }
 
