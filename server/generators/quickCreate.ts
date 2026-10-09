@@ -1,6 +1,5 @@
 import sharp from "sharp";
 import { ENV } from "../_core/env";
-import { generateImage } from "../_core/imageGeneration";
 import { invokeLLM } from "../_core/llm";
 import {
   addPageResult,
@@ -19,6 +18,11 @@ export type BrandingOption =
   | "WishesWithoutBordersCo"
   | "LaneDigitalWorks"
   | "none";
+
+export type QuickCreateOutputStyle =
+  | "full-color"
+  | "coloring"
+  | "reference-coloring";
 
 // ─── Size Presets ─────────────────────────────────────────────────────────────
 
@@ -169,6 +173,7 @@ const MAX_TOTAL_REFERENCE_IMAGE_BYTES = 16 * 1024 * 1024;
 
 const COLORING_NEGATIVE_PROMPT =
   "no text, no words, no letters, no numbers, no writing, no captions, no labels, no watermark, no signature, no blur, no distortion, no artifacts";
+const COLORING_LINE_THRESHOLD = 180;
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -184,7 +189,7 @@ export interface QuickCreateOptions {
   customPrompt?: string;
   pageCount: number;
   branding?: BrandingOption;
-  outputStyle?: "full-color" | "coloring";
+  outputStyle?: QuickCreateOutputStyle;
   sizePreset?: SizePreset;
   showPageNumbers?: boolean;
   upscale?: boolean;
@@ -196,7 +201,8 @@ export type ReferenceImageRole =
   | "face-identity"
   | "body-pose"
   | "style-color"
-  | "object-scene";
+  | "object-scene"
+  | "source-image";
 
 export interface QuickCreateReferenceImage {
   data: string;
@@ -208,7 +214,7 @@ interface NormalizedOptions {
   prompt: string;
   pageCount: number;
   branding: BrandingOption;
-  outputStyle: "full-color" | "coloring";
+  outputStyle: QuickCreateOutputStyle;
   sizePreset: SizePreset;
   showPageNumbers: boolean;
   upscale: boolean;
@@ -234,6 +240,8 @@ const REFERENCE_ROLE_INSTRUCTIONS: Record<ReferenceImageRole, string> = {
     "Use this for art style, palette, lighting, texture, and visual treatment; do not copy unrelated subjects or layout.",
   "object-scene":
     "Use this for the referenced object, subject, or scene elements, incorporating only what the user's prompt requests.",
+  "source-image":
+    "This is the exact source artwork to convert, not broad inspiration. Preserve its composition, subject identity, pose, expression, framing, proportions, silhouette, and placement of important objects. Redraw the existing content as clean coloring-page outlines; do not invent a different scene or add text.",
 };
 
 export function buildReferenceImageInstructions(
@@ -317,18 +325,23 @@ function normalizeOptions(options: QuickCreateOptions): NormalizedOptions {
   }
 
   const branding: BrandingOption = options.branding || "WishesWithoutBordersCo";
-  const outputStyle = options.outputStyle || "full-color";
+  const outputStyle: QuickCreateOutputStyle =
+    options.outputStyle || "full-color";
   const sizePreset: SizePreset = options.sizePreset || "8.5x11-portrait";
   const showPageNumbers = options.showPageNumbers !== false;
   const upscale = options.upscale === true;
   const referenceImages = normalizeReferenceImages(options.referenceImages);
-
-  // If the user selected Coloring output style but the prompt doesn't already
-  // trigger isColoringRequest, prepend a keyword so the coloring-page path fires.
-  let prompt = rawPrompt.slice(0, 2000);
-  if (outputStyle === "coloring" && !isColoringRequest(prompt)) {
-    prompt = `coloring page: ${prompt}`;
+  if (outputStyle === "reference-coloring" && referenceImages.length !== 1) {
+    throw new Error("Photo-to-coloring mode requires exactly one source image");
   }
+  const prompt = rawPrompt.slice(0, 2000);
+  const normalizedReferenceImages =
+    outputStyle === "reference-coloring"
+      ? referenceImages.map(image => ({
+          ...image,
+          role: "source-image" as const,
+        }))
+      : referenceImages;
 
   return {
     prompt,
@@ -338,7 +351,7 @@ function normalizeOptions(options: QuickCreateOptions): NormalizedOptions {
     sizePreset,
     showPageNumbers,
     upscale,
-    referenceImages,
+    referenceImages: normalizedReferenceImages,
   };
 }
 
@@ -354,10 +367,24 @@ function extractLlmText(result: Awaited<ReturnType<typeof invokeLLM>>): string {
     .trim();
 }
 
-function isColoringRequest(prompt: string): boolean {
-  return /\b(?:coloring|colouring|line art|colour-in|color-in|coloring book|coloring page)\b/i.test(
-    prompt
-  );
+export function isColoringOutputStyle(
+  outputStyle: QuickCreateOutputStyle
+): boolean {
+  return outputStyle === "coloring" || outputStyle === "reference-coloring";
+}
+
+export function buildColoringPagePrompt(options: {
+  prompt: string;
+  sizeLabel: string;
+  pageIndex: number;
+  totalPages: number;
+  preserveReference: boolean;
+}): string {
+  const pageDescription = options.preserveReference
+    ? `Convert the attached source image itself into a printable black-and-white coloring page; treat it as the artwork to transform, not as inspiration for a new scene. Preserve the same subject identity, facial features, expression, pose, proportions, framing and crop, silhouette, and placement of its distinctive accessories, patterns, and background elements. Redraw the existing content as clean, crisp, closed black outlines on pure white, leaving the interior regions open for coloring. Do not add, remove, rearrange, or invent subjects or objects. Do not add titles, captions, or other text. The user's additional instructions are: "${options.prompt}". Apply them as conversion and print instructions without changing the source composition.`
+    : `Create a new black-and-white line-art coloring page based exactly on this request: "${options.prompt}". Infer the intended subject and level of detail from the user's words, but do not add unrelated content.`;
+
+  return `${pageDescription} Use clean, consistently weighted outlines and generous white fillable areas. No color, gray tones, gradients, shadows, cross-hatching, stippling, background textures, or large solid-black shading; use solid black only for small essential details. Compose for a ${options.sizeLabel} page. This is page ${options.pageIndex + 1} of ${options.totalPages}.`;
 }
 
 function wait(milliseconds: number): Promise<void> {
@@ -450,10 +477,16 @@ async function generatePageComposition(
 ): Promise<PageComposition> {
   const dims = getSizeDimensions(options.sizePreset);
 
-  if (isColoringRequest(options.prompt)) {
+  if (isColoringOutputStyle(options.outputStyle)) {
     return {
       pageType: "coloring-page",
-      imagePrompt: `Create a black-and-white line-art coloring page based exactly on this request: ${options.prompt}. Infer the intended audience, maturity, complexity, detail, and visual sophistication solely from the user\'s words. Use thick, clean, crisp outlines, no shading, no color, and no background clutter. Center the unique scene on the page with strong contrast and professional vector-like edges. Compose for a ${dims.label} page. This is page ${pageIndex + 1} of ${totalPages}.`,
+      imagePrompt: buildColoringPagePrompt({
+        prompt: options.prompt,
+        sizeLabel: dims.label,
+        pageIndex,
+        totalPages,
+        preserveReference: options.outputStyle === "reference-coloring",
+      }),
     };
   }
 
@@ -639,42 +672,21 @@ async function generateCompositionImage(
 async function generateColoringPage(
   imagePrompt: string,
   dims: SizeDimensions,
-  referenceImages: QuickCreateReferenceImage[] = []
+  referenceImages: QuickCreateReferenceImage[] = [],
+  preserveSource = false
 ): Promise<Buffer> {
   const coloringPrompt = `${imagePrompt}. Style requirements: pure black-and-white line art coloring page, thick clean outlines only, no shading, no gray tones, no color fills, no background textures, high-contrast black lines on a pure white background, exceptionally crisp vector-like edges, sharply defined subjects, premium professional coloring-book quality suitable for high-resolution printing. Negative requirements: ${COLORING_NEGATIVE_PROMPT}.`;
 
-  let rawBuffer: Buffer;
-  if (referenceImages.length > 0) {
-    rawBuffer = await generateCompositionImage(coloringPrompt, referenceImages);
-  } else {
-    try {
-      const { url } = await generateImage({
-        prompt: coloringPrompt,
-        aspectRatio: "3:4",
-      });
-      if (!url) throw new Error("fal.ai returned no coloring-page image URL");
-
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(
-          `Failed to download fal.ai coloring page (${response.status})`
-        );
-      }
-      rawBuffer = Buffer.from(await response.arrayBuffer());
-    } catch (error) {
-      console.warn(
-        "fal.ai coloring-page generation failed; using the high-quality OpenRouter fallback:",
-        error
-      );
-      rawBuffer = await generateCompositionImage(coloringPrompt);
-    }
-  }
+  const rawBuffer = await generateCompositionImage(
+    coloringPrompt,
+    referenceImages
+  );
 
   // Post-process to ensure clean B&W output
   const cleaned = await sharp(rawBuffer)
     .flatten({ background: "#ffffff" })
     .grayscale()
-    .threshold(128)
+    .threshold(COLORING_LINE_THRESHOLD)
     .sharpen()
     .png()
     .toBuffer();
@@ -682,7 +694,8 @@ async function generateColoringPage(
   // Resize to target print dimensions
   return sharp(cleaned)
     .resize(dims.width, dims.height, {
-      fit: "fill",
+      fit: preserveSource ? "contain" : "fill",
+      background: "#ffffff",
       kernel: sharp.kernel.lanczos3,
     })
     .png({ compressionLevel: 9 })
@@ -729,7 +742,8 @@ async function generateQuickCreatePage(
       ? await generateColoringPage(
           composition.imagePrompt,
           dims,
-          options.referenceImages
+          options.referenceImages,
+          options.outputStyle === "reference-coloring"
         )
       : await generateTextHeavyPage(
           composition.imagePrompt,
