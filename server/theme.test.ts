@@ -31,44 +31,46 @@ function contrast(foreground: string, background: string) {
   return (values[0] + 0.05) / (values[1] + 0.05);
 }
 
-describe("Quoratorium Ember theme", () => {
-  it("keeps the shared palette aligned with Quoratorium", () => {
-    // Reference: quoratorium/client/src/index.css at 61fe3cb.
+describe("Quoratorium blue-violet glass theme", () => {
+  it("uses near-black surfaces, restrained blue/violet accents, and silver borders", () => {
     const palette = {
-      background: "#050302",
-      foreground: "#f7efe9",
-      card: "#0b0704",
-      "card-foreground": "#f7efe9",
-      popover: "#100a06",
-      "popover-foreground": "#f7efe9",
-      primary: "#d86618",
-      "primary-foreground": "#fffaf5",
-      secondary: "#120b07",
-      "secondary-foreground": "#f7efe9",
-      muted: "#130c08",
-      "muted-foreground": "#9f8e82",
-      accent: "#1b0e07",
-      "accent-foreground": "#fff3e8",
-      border: "rgba(242, 140, 56, 0.12)",
-      input: "rgba(242, 140, 56, 0.14)",
-      ring: "#e87a25",
-      "chart-1": "#d86618",
-      "chart-2": "#f59a44",
-      "chart-3": "#f4b06f",
-      "chart-4": "#9a3d0b",
-      "chart-5": "#ffd0a8",
-      sidebar: "#060403",
-      "sidebar-foreground": "#f7efe9",
-      "sidebar-primary": "#d86618",
-      "sidebar-primary-foreground": "#fffaf5",
-      "sidebar-accent": "#160d08",
-      "sidebar-accent-foreground": "#f7efe9",
-      "sidebar-border": "rgba(242, 140, 56, 0.1)",
-      "sidebar-ring": "#e87a25",
+      background: "#04050a",
+      foreground: "#e8eaf1",
+      card: "#080a12",
+      "card-foreground": "#e8eaf1",
+      popover: "#0b0d17",
+      "popover-foreground": "#e8eaf1",
+      primary: "#8395ff",
+      "primary-foreground": "#f5f6ff",
+      secondary: "#0d101a",
+      "secondary-foreground": "#e8eaf1",
+      muted: "#10131e",
+      "muted-foreground": "#a3a9b8",
+      accent: "#161a2c",
+      "accent-foreground": "#eef0ff",
+      destructive: "#ef4444",
+      "destructive-foreground": "#ffffff",
+      border: "rgba(177, 188, 214, 0.12)",
+      input: "rgba(177, 188, 214, 0.14)",
+      ring: "#98a8ff",
+      "chart-1": "#8395ff",
+      "chart-2": "#a99aff",
+      "chart-3": "#cdc6ff",
+      "chart-4": "#6879d8",
+      "chart-5": "#e6e6ff",
+      sidebar: "#060810",
+      "sidebar-foreground": "#e8eaf1",
+      "sidebar-primary": "#8395ff",
+      "sidebar-primary-foreground": "#f5f6ff",
+      "sidebar-accent": "#111525",
+      "sidebar-accent-foreground": "#e8eaf1",
+      "sidebar-border": "rgba(177, 188, 214, 0.1)",
+      "sidebar-ring": "#98a8ff",
     };
     for (const [name, value] of Object.entries(palette))
       expect(token(name)).toBe(value);
     expect(css).toMatch(/:root,\s*\.dark\s*\{/);
+    expect(css).toContain("backdrop-filter: blur(28px) saturate(140%)");
   });
 
   it("preserves the semantic destructive color", () => {
@@ -90,11 +92,11 @@ describe("Quoratorium Ember theme", () => {
     }
   });
 
-  it("keeps text, placeholders, and selected controls readable on warm surfaces", () => {
+  it("keeps text, placeholders, and selected controls readable on glass surfaces", () => {
     for (const surface of ["background", "card", "muted", "popover"]) {
-      expect(
-        contrast(token("foreground"), token(surface))
-      ).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(token("foreground"), token(surface))).toBeGreaterThanOrEqual(
+        4.5
+      );
       expect(
         contrast(token("muted-foreground"), token(surface))
       ).toBeGreaterThanOrEqual(4.5);
@@ -104,15 +106,14 @@ describe("Quoratorium Ember theme", () => {
     ).toBeGreaterThanOrEqual(4.5);
   });
 
-  it("does not restore silver actions or blue/purple ambient effects", () => {
+  it("removes the old ember accents while preserving themed controls", () => {
     for (const legacy of [
-      "#667eea",
-      "#6d5dfc",
-      "#cbd5e1",
-      "#d9e0e9",
-      "#aeb9c8",
-      "rgba(102, 126, 234",
-      "rgba(91, 119, 255",
+      "#d86618",
+      "#e87a25",
+      "#ffae67",
+      "#b7470b",
+      "rgba(216, 102, 24",
+      "rgba(242, 140, 56",
     ]) {
       expect(css).not.toContain(legacy);
     }
@@ -125,9 +126,7 @@ describe("Quoratorium Ember theme", () => {
     const quickCreate = source("src/pages/QuickCreateGenerator.tsx");
     expect(quickCreate.match(/aria-pressed=/g)).toHaveLength(6);
     expect(quickCreate.match(/className=\{toggleBtnClass\}/g)).toHaveLength(6);
-    expect(quickCreate).not.toMatch(
-      /bg-white|text-black|text-yellow-400|border-white/
-    );
+    expect(quickCreate).not.toMatch(/bg-white|text-black|text-yellow-400|border-white/);
     expect(css).toContain('.studio-choice[aria-pressed="true"]');
     expect(css).toContain(".studio-choice:focus-visible");
     expect(source("src/pages/Home.tsx")).toContain("aria-label={tab.label}");
@@ -135,7 +134,7 @@ describe("Quoratorium Ember theme", () => {
 
   it("uses the theme for browser chrome and the not-found action", () => {
     expect(source("index.html")).toContain(
-      'name="theme-color" content="#050302"'
+      'name="theme-color" content="#04050a"'
     );
     expect(source("src/pages/NotFound.tsx")).not.toMatch(
       /bg-white|bg-black|text-black|text-white/
