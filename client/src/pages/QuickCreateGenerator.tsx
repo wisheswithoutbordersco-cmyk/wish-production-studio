@@ -21,6 +21,20 @@ import { useGenerationJob } from "@/hooks/useGenerationJob";
 import { Zap, Sparkles, Download, ImagePlus, X } from "lucide-react";
 
 const PAGE_OPTIONS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30];
+const PAGE_COUNT_STORAGE_KEY = "wish-production-studio.quick-create.page-count";
+
+function getSavedPageCount() {
+  if (typeof window === "undefined") return 1;
+
+  try {
+    const savedCount = Number(
+      window.localStorage.getItem(PAGE_COUNT_STORAGE_KEY)
+    );
+    return PAGE_OPTIONS.includes(savedCount) ? savedCount : 1;
+  } catch {
+    return 1;
+  }
+}
 
 const SIZE_OPTIONS = [
   { id: "8.5x11-portrait", label: "8.5×11 Portrait", aspectHint: "portrait" },
@@ -147,7 +161,7 @@ export default function QuickCreateGenerator() {
   const [isPreparingReferences, setIsPreparingReferences] = useState(false);
   const [referenceError, setReferenceError] = useState<string | null>(null);
   const referenceInputRef = useRef<HTMLInputElement>(null);
-  const [pageCount, setPageCount] = useState(5);
+  const [pageCount, setPageCount] = useState(getSavedPageCount);
   const [branding, setBranding] = useState<
     "WishesWithoutBordersCo" | "LaneDigitalWorks" | "none"
   >("none");
@@ -163,6 +177,14 @@ export default function QuickCreateGenerator() {
 
   const { jobState, isGenerating, progress, startJob, cancelJob } =
     useGenerationJob();
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(PAGE_COUNT_STORAGE_KEY, String(pageCount));
+    } catch {
+      // Keep the selected count usable when browser storage is unavailable.
+    }
+  }, [pageCount]);
 
   const handleReferenceUpload = async (
     event: React.ChangeEvent<HTMLInputElement>
