@@ -160,6 +160,7 @@ export default function QuickCreateGenerator() {
   const [referenceImages, setReferenceImages] = useState<ReferenceImage[]>([]);
   const [isPreparingReferences, setIsPreparingReferences] = useState(false);
   const [referenceError, setReferenceError] = useState<string | null>(null);
+  const [referenceUploadFailed, setReferenceUploadFailed] = useState(false);
   const referenceInputRef = useRef<HTMLInputElement>(null);
   const [pageCount, setPageCount] = useState(getSavedPageCount);
   const [branding, setBranding] = useState<
@@ -204,6 +205,7 @@ export default function QuickCreateGenerator() {
 
     setIsPreparingReferences(true);
     setReferenceError(null);
+    setReferenceUploadFailed(false);
     const prepared: ReferenceImage[] = [];
     try {
       const filesToPrepare = files.slice(0, slots);
@@ -226,6 +228,7 @@ export default function QuickCreateGenerator() {
         );
       }
     } catch (error) {
+      setReferenceUploadFailed(true);
       setReferenceError(
         error instanceof Error
           ? error.message
@@ -254,6 +257,7 @@ export default function QuickCreateGenerator() {
   }, []);
 
   const handleGenerate = () => {
+    if (referenceUploadFailed) return;
     if (!prompt.trim() && outputStyle !== "reference-coloring") return;
     if (outputStyle === "reference-coloring" && referenceImages.length !== 1) {
       return;
@@ -268,6 +272,7 @@ export default function QuickCreateGenerator() {
       sizePreset,
       showPageNumbers,
       upscale,
+      expectedReferenceImageCount: referenceImages.length,
       referenceImages: referenceImages.map(({ data, mimeType, role }) => ({
         data,
         mimeType,
@@ -607,6 +612,7 @@ export default function QuickCreateGenerator() {
             disabled={
               isGenerating ||
               isPreparingReferences ||
+              referenceUploadFailed ||
               (!prompt.trim() && outputStyle !== "reference-coloring") ||
               (outputStyle === "reference-coloring" &&
                 referenceImages.length !== 1)
