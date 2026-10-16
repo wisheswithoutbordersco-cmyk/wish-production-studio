@@ -1,10 +1,12 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
+import sharp from "sharp";
 import {
   QUICK_CREATE_REFERENCE_ENHANCEMENT_PROMPT,
   SCRIPTORIUM_IMAGE_FALLBACK_MODEL,
   SCRIPTORIUM_IMAGE_MODEL,
+  applyReferenceEnhancementFinishingPass,
   buildColoringPagePrompt,
   buildScriptoriumFallbackPrompt,
   buildScriptoriumImageEditFormData,
@@ -15,6 +17,7 @@ import {
   isColoringOutputStyle,
   isGenericReferenceEnhancementPrompt,
   normalizeQuickCreateOptions,
+  resizeReferenceWithBlurredBackground,
 } from "./generators/quickCreate";
 
 const source = readFileSync(
@@ -65,8 +68,13 @@ describe("Scriptorium Quick Create", () => {
     expect(normalized.referenceEnhancement).toBe(true);
     expect(normalized.prompt).toContain("Polish this picture up.");
     expect(normalized.prompt).toContain(
-      "Recreate this exact image, same subject and pose, enhanced detail and lighting."
+      "clearly visible but natural improvement"
     );
+    expect(normalized.prompt).toContain("richer, more vivid color");
+    expect(normalized.prompt).toContain(
+      "crisp edge definition and fine detail"
+    );
+    expect(normalized.prompt).toContain("brighter, balanced lighting");
     expect(normalized.prompt).toContain("Keep the original subject identity");
     expect(normalized.prompt).toContain("composition, object placement");
     expect(normalized.prompt).toContain(
@@ -308,8 +316,11 @@ describe("Scriptorium Quick Create", () => {
     expect(prompt).toContain("bold saturated vivid colors");
     expect(prompt).toContain('"WishesWithoutBordersCo"');
     expect(prompt).toContain("never a photographed paper");
-    expect(QUICK_CREATE_REFERENCE_ENHANCEMENT_PROMPT).toBe(
-      "Recreate this exact image, same subject and pose, enhanced detail and lighting."
+    expect(QUICK_CREATE_REFERENCE_ENHANCEMENT_PROMPT).toContain(
+      "Recreate the exact same image"
+    );
+    expect(QUICK_CREATE_REFERENCE_ENHANCEMENT_PROMPT).toContain(
+      "richer, more vivid color"
     );
   });
 
@@ -317,6 +328,116 @@ describe("Scriptorium Quick Create", () => {
     expect(getScriptoriumSystemPrompt("none")).not.toContain("Footer branding");
     expect(getScriptoriumSystemPrompt("LaneDigitalWorks")).toContain(
       'Footer branding with the exact text "LaneDigitalWorks"'
+    );
+  });
+});
+
+describe("Quick Create reference-image finishing", () => {
+  it("fills aspect-ratio margins from a blurred source crop and preserves the full foreground", async () => {
+    const sourceWidth = 40;
+    const sourceHeight = 20;
+    const channels = 3;
+    const pixels = Buffer.alloc(sourceWidth * sourceHeight * channels);
+
+    for (let y = 0; y < sourceHeight; y++) {
+      for (let x = 0; x < sourceWidth; x++) {
+        const offset = (y * sourceWidth + x) * channels;
+        const isLeftHalf = x < sourceWidth / 2;
+        pixels[offset] = isLeftHalf ? 240 : 20;
+        pixels[offset + 1] = 40;
+        pixels[offset + 2] = isLeftHalf ? 20 : 240;
+      }
+    }
+
+    const source = await sharp(pixels, {
+      raw: { width: sourceWidth, height: sourceHeight, channels },
+    })
+      .png()
+      .toBuffer();
+    const result = await resizeReferenceWithBlurredBackground(source, 20, 40);
+    const { data, info } = await sharp(result)
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const pixelAt = (x: number, y: number) => {
+      const offset = (y * info.width + x) * info.channels;
+      return Array.from(data.subarray(offset, offset + 3));
+    };
+
+    expect(info.width).toBe(20);
+    expect(info.height).toBe(40);
+
+    const topFill = pixelAt(10, 2);
+    expect(topFill[0]).toBeGreaterThan(0);
+    expect(topFill[2]).toBeGreaterThan(0);
+    expect(topFill).not.toEqual([255, 255, 255]);
+
+    const foregroundLeft = pixelAt(4, 20);
+    const foregroundRight = pixelAt(15, 20);
+    expect(foregroundLeft[0]).toBeGreaterThan(foregroundLeft[2]);
+    expect(foregroundRight[2]).toBeGreaterThan(foregroundRight[0]);
+  });
+
+  it("increases color richness and exposure and sharpens a synthetic edge", async () => {
+    const width = 32;
+    const height = 24;
+    const channels = 3;
+    const pixels = Buffer.alloc(width * height * channels);
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const offset = (y * width + x) * channels;
+        const color = x < width / 2 ? [120, 100, 80] : [140, 120, 100];
+        pixels.set(color, offset);
+      }
+    }
+
+    const source = await sharp(pixels, {
+      raw: { width, height, channels },
+    })
+      .png()
+      .toBuffer();
+    const [enhanced, modulationOnly] = await Promise.all([
+      applyReferenceEnhancementFinishingPass(source),
+      sharp(source)
+        .modulate({ saturation: 1.16, brightness: 1.04 })
+        .png()
+        .toBuffer(),
+    ]);
+    const [sourceRaw, enhancedRaw, modulationRaw] = await Promise.all([
+      sharp(source).raw().toBuffer({ resolveWithObject: true }),
+      sharp(enhanced).raw().toBuffer({ resolveWithObject: true }),
+      sharp(modulationOnly).raw().toBuffer({ resolveWithObject: true }),
+    ]);
+    const sample = (raster: typeof sourceRaw, x: number, y: number) => {
+      const offset = (y * raster.info.width + x) * raster.info.channels;
+      return Array.from(raster.data.subarray(offset, offset + 3));
+    };
+    const spread = (pixel: number[]) => Math.max(...pixel) - Math.min(...pixel);
+    const brightness = (pixel: number[]) =>
+      (pixel[0] + pixel[1] + pixel[2]) / 3;
+
+    const originalColor = sample(sourceRaw, 4, 12);
+    const enhancedColor = sample(enhancedRaw, 4, 12);
+    expect(spread(enhancedColor)).toBeGreaterThan(spread(originalColor));
+    expect(brightness(enhancedColor)).toBeGreaterThan(
+      brightness(originalColor)
+    );
+
+    const baselineEdge = Math.abs(
+      sample(modulationRaw, 15, 12)[0] - sample(modulationRaw, 16, 12)[0]
+    );
+    const sharpenedEdge = Math.abs(
+      sample(enhancedRaw, 15, 12)[0] - sample(enhancedRaw, 16, 12)[0]
+    );
+    expect(sharpenedEdge).toBeGreaterThan(baselineEdge);
+  });
+
+  it("uses blurred fill on preserved references and finishing only on enhancement output", () => {
+    expect(source).toMatch(
+      /if \(preserveSource\) \{\s*return resizeReferenceWithBlurredBackground\(\s*cleaned/
+    );
+    expect(source).toMatch(
+      /const enhancedBuffer\s*=\s*await\s*applyReferenceEnhancementFinishingPass\s*\(\s*rawBuffer\s*\)\s*;\s*return\s*resizeReferenceWithBlurredBackground\s*\(/s
     );
   });
 });
