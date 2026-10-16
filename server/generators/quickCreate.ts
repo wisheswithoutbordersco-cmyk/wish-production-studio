@@ -264,7 +264,7 @@ export function buildReferenceImageInstructions(
 }
 
 export const QUICK_CREATE_REFERENCE_ENHANCEMENT_PROMPT =
-  "Recreate this exact image, same subject and pose, enhanced detail and lighting.";
+  "Recreate the exact same image, subject, pose, expression, framing, crop, and composition. Make a clearly visible but natural improvement: richer, more vivid color with clean contrast, crisp edge definition and fine detail, and brighter, balanced lighting with recovered shadow detail. Reduce haze and compression noise while retaining the original visual style.";
 
 const GENERIC_REFERENCE_ENHANCEMENT_PROMPTS = new Set([
   "polish this picture",
@@ -316,7 +316,7 @@ export function isGenericReferenceEnhancementPrompt(prompt: string): boolean {
 }
 
 export function buildReferenceEnhancementPrompt(userPrompt: string): string {
-  return `${userPrompt}\n\n${QUICK_CREATE_REFERENCE_ENHANCEMENT_PROMPT} Keep the original subject identity, pose, expression, framing, crop, composition, object placement, background, typography, logos, and existing text unchanged. Do not add, remove, replace, rearrange, or invent any content. Improve only sharpness, fine detail, color fidelity, exposure, and natural lighting.`;
+  return `${userPrompt}\n\n${QUICK_CREATE_REFERENCE_ENHANCEMENT_PROMPT} Keep the original subject identity, pose, expression, framing, crop, composition, object placement, background, typography, logos, and existing text unchanged. Do not add, remove, replace, rearrange, or invent any content. Preserve natural skin tones and existing text/logo legibility; do not redesign the image.`;
 }
 
 function assertReferenceImageCount(
@@ -811,6 +811,85 @@ export async function generateCompositionImage(
     : new Error("Image generation failed after 3 attempts");
 }
 
+/**
+ * Preserve the complete image while filling aspect-ratio margins with a blurred
+ * crop of the same image instead of white letterboxing.
+ */
+export async function resizeReferenceWithBlurredBackground(
+  imageBuffer: Buffer,
+  width: number,
+  height: number
+): Promise<Buffer> {
+  const metadata = await sharp(imageBuffer).metadata();
+  if (!metadata.width || !metadata.height) {
+    throw new Error("Cannot resize a reference image without dimensions");
+  }
+
+  if (metadata.width * height === metadata.height * width) {
+    return sharp(imageBuffer)
+      .resize(width, height, {
+        fit: "contain",
+        background: "#ffffff",
+        kernel: sharp.kernel.lanczos3,
+      })
+      .png({ compressionLevel: 9 })
+      .toBuffer();
+  }
+
+  const scale = Math.min(width / metadata.width, height / metadata.height);
+  const foregroundWidth = Math.max(1, Math.round(metadata.width * scale));
+  const foregroundHeight = Math.max(1, Math.round(metadata.height * scale));
+  const blurSigma = Math.max(
+    8,
+    Math.min(40, Math.round(Math.min(width, height) * 0.0125))
+  );
+
+  const [background, foreground] = await Promise.all([
+    sharp(imageBuffer)
+      .flatten({ background: "#ffffff" })
+      .resize(width, height, {
+        fit: "cover",
+        position: "centre",
+        kernel: sharp.kernel.lanczos3,
+      })
+      .blur(blurSigma)
+      .png()
+      .toBuffer(),
+    sharp(imageBuffer)
+      .resize(foregroundWidth, foregroundHeight, {
+        fit: "fill",
+        kernel: sharp.kernel.lanczos3,
+      })
+      .png()
+      .toBuffer(),
+  ]);
+
+  return sharp(background)
+    .composite([
+      {
+        input: foreground,
+        left: Math.floor((width - foregroundWidth) / 2),
+        top: Math.floor((height - foregroundHeight) / 2),
+      },
+    ])
+    .png({ compressionLevel: 9 })
+    .toBuffer();
+}
+
+/**
+ * Apply a restrained, local finish so a reference enhancement changes color,
+ * exposure, and edge definition even when the image model's edit is subtle.
+ */
+export async function applyReferenceEnhancementFinishingPass(
+  imageBuffer: Buffer
+): Promise<Buffer> {
+  return sharp(imageBuffer)
+    .modulate({ saturation: 1.16, brightness: 1.04 })
+    .sharpen({ sigma: 1 })
+    .png({ compressionLevel: 9 })
+    .toBuffer();
+}
+
 async function generateColoringPage(
   imagePrompt: string,
   dims: SizeDimensions,
@@ -836,9 +915,17 @@ async function generateColoringPage(
     .toBuffer();
 
   // Resize to target print dimensions
+  if (preserveSource) {
+    return resizeReferenceWithBlurredBackground(
+      cleaned,
+      dims.width,
+      dims.height
+    );
+  }
+
   return sharp(cleaned)
     .resize(dims.width, dims.height, {
-      fit: preserveSource ? "contain" : "fill",
+      fit: "fill",
       background: "#ffffff",
       kernel: sharp.kernel.lanczos3,
     })
@@ -860,9 +947,19 @@ async function generateTextHeavyPage(
     preserveReferenceComposition
   );
 
+  if (preserveReferenceComposition) {
+    const enhancedBuffer =
+      await applyReferenceEnhancementFinishingPass(rawBuffer);
+    return resizeReferenceWithBlurredBackground(
+      enhancedBuffer,
+      dims.width,
+      dims.height
+    );
+  }
+
   return sharp(rawBuffer)
     .resize(dims.width, dims.height, {
-      fit: preserveReferenceComposition ? "contain" : "fill",
+      fit: "fill",
       background: "#ffffff",
       kernel: sharp.kernel.lanczos3,
     })
