@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import sharp from "sharp";
 import { ENV } from "../_core/env";
 import { invokeLLM } from "../_core/llm";
@@ -194,6 +195,7 @@ export interface QuickCreateOptions {
   showPageNumbers?: boolean;
   upscale?: boolean;
   referenceImages?: QuickCreateReferenceImage[];
+  expectedReferenceImageCount?: number;
 }
 
 export type ReferenceImageRole =
@@ -219,6 +221,8 @@ interface NormalizedOptions {
   showPageNumbers: boolean;
   upscale: boolean;
   referenceImages?: QuickCreateReferenceImage[];
+  expectedReferenceImageCount: number;
+  referenceEnhancement: boolean;
 }
 
 interface ImageApiResponse {
@@ -257,6 +261,81 @@ export function buildReferenceImageInstructions(
     .join("\n");
 
   return `\n\nREFERENCE IMAGE GUIDANCE:\nUse each attached image according to its assigned role. Follow the user's explicit instructions about what to preserve or change above all else.\n${instructions}`;
+}
+
+export const QUICK_CREATE_REFERENCE_ENHANCEMENT_PROMPT =
+  "Recreate this exact image, same subject and pose, enhanced detail and lighting.";
+
+const GENERIC_REFERENCE_ENHANCEMENT_PROMPTS = new Set([
+  "polish this picture",
+  "polish this picture up",
+  "polish this image",
+  "polish this image up",
+  "polish this photo",
+  "polish this photo up",
+  "polish this up",
+  "polish it up",
+  "enhance this picture",
+  "enhance this image",
+  "enhance this photo",
+  "enhance it",
+  "improve this picture",
+  "improve this image",
+  "improve this photo",
+  "improve it",
+  "touch this up",
+  "touch it up",
+  "clean this up",
+  "clean up this picture",
+  "clean up this image",
+  "clean up this photo",
+  "make it better",
+  "make it look better",
+  "make this better",
+  "make this picture better",
+  "make this image better",
+  "make this photo better",
+  "make this picture look better",
+  "make this image look better",
+  "make this photo look better",
+  "make the picture better",
+  "make the image better",
+  "make the photo better",
+  "make it more polished",
+]);
+
+export function isGenericReferenceEnhancementPrompt(prompt: string): boolean {
+  const normalized = prompt
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/^(?:(?:please|just|could you|can you)\s+)+/, "")
+    .replace(/\s+(?:please|for me)$/, "");
+
+  return GENERIC_REFERENCE_ENHANCEMENT_PROMPTS.has(normalized);
+}
+
+export function buildReferenceEnhancementPrompt(userPrompt: string): string {
+  return `${userPrompt}\n\n${QUICK_CREATE_REFERENCE_ENHANCEMENT_PROMPT} Keep the original subject identity, pose, expression, framing, crop, composition, object placement, background, typography, logos, and existing text unchanged. Do not add, remove, replace, rearrange, or invent any content. Improve only sharpness, fine detail, color fidelity, exposure, and natural lighting.`;
+}
+
+function assertReferenceImageCount(
+  referenceImages: QuickCreateReferenceImage[],
+  expectedReferenceImageCount: number
+): void {
+  if (
+    !Number.isInteger(expectedReferenceImageCount) ||
+    expectedReferenceImageCount < 0 ||
+    expectedReferenceImageCount > MAX_REFERENCE_IMAGES
+  ) {
+    throw new Error("Reference image count is invalid");
+  }
+
+  if (referenceImages.length !== expectedReferenceImageCount) {
+    throw new Error(
+      `Reference image upload is incomplete: expected ${expectedReferenceImageCount}, received ${referenceImages.length}. Please remove and re-add the image.`
+    );
+  }
 }
 
 function normalizeReferenceImages(
@@ -311,7 +390,9 @@ function normalizeReferenceImages(
   });
 }
 
-function normalizeOptions(options: QuickCreateOptions): NormalizedOptions {
+export function normalizeQuickCreateOptions(
+  options: QuickCreateOptions
+): NormalizedOptions {
   const rawPrompt = (options.prompt || options.customPrompt || "").trim();
   const pageCount = Number(options.pageCount);
 
@@ -331,10 +412,20 @@ function normalizeOptions(options: QuickCreateOptions): NormalizedOptions {
   const showPageNumbers = options.showPageNumbers !== false;
   const upscale = options.upscale === true;
   const referenceImages = normalizeReferenceImages(options.referenceImages);
+  const expectedReferenceImageCount =
+    options.expectedReferenceImageCount ?? referenceImages.length;
+  assertReferenceImageCount(referenceImages, expectedReferenceImageCount);
   if (outputStyle === "reference-coloring" && referenceImages.length !== 1) {
     throw new Error("Photo-to-coloring mode requires exactly one source image");
   }
-  const prompt = rawPrompt.slice(0, 2000);
+  const basePrompt = rawPrompt.slice(0, 2000);
+  const referenceEnhancement =
+    outputStyle === "full-color" &&
+    referenceImages.length === 1 &&
+    isGenericReferenceEnhancementPrompt(basePrompt);
+  const prompt = referenceEnhancement
+    ? buildReferenceEnhancementPrompt(basePrompt)
+    : basePrompt;
   const normalizedReferenceImages =
     outputStyle === "reference-coloring"
       ? referenceImages.map(image => ({
@@ -352,6 +443,8 @@ function normalizeOptions(options: QuickCreateOptions): NormalizedOptions {
     showPageNumbers,
     upscale,
     referenceImages: normalizedReferenceImages,
+    expectedReferenceImageCount,
+    referenceEnhancement,
   };
 }
 
@@ -477,6 +570,13 @@ async function generatePageComposition(
 ): Promise<PageComposition> {
   const dims = getSizeDimensions(options.sizePreset);
 
+  if (options.referenceEnhancement) {
+    return {
+      pageType: "text-heavy",
+      imagePrompt: options.prompt,
+    };
+  }
+
   if (isColoringOutputStyle(options.outputStyle)) {
     return {
       pageType: "coloring-page",
@@ -565,8 +665,13 @@ function buildFallbackComposition(
 export function buildScriptoriumImageEditFormData(
   prompt: string,
   referenceImages: QuickCreateReferenceImage[],
-  model: string
+  model: string,
+  size: "1024x1536" | "auto" = "1024x1536"
 ): FormData {
+  if (referenceImages.length === 0) {
+    throw new Error("Image edit requests require at least one reference image");
+  }
+
   const formData = new FormData();
   formData.set("model", model);
   formData.set(
@@ -575,7 +680,7 @@ export function buildScriptoriumImageEditFormData(
   );
   formData.set("n", "1");
   formData.set("quality", "high");
-  formData.set("size", "1024x1536");
+  formData.set("size", size);
   formData.set("background", "opaque");
   formData.set("output_format", "png");
 
@@ -595,45 +700,82 @@ export function buildScriptoriumImageEditFormData(
     );
   }
 
+  if (formData.getAll("image[]").length !== referenceImages.length) {
+    throw new Error(
+      "Not all reference images were attached to the edit request"
+    );
+  }
+
   return formData;
 }
 
-async function generateCompositionImage(
+// Reference jobs must fail instead of falling through to text-only generation.
+// This enforces reference attachment, but cannot guarantee the model's semantic adherence.
+export async function generateCompositionImage(
   prompt: string,
-  referenceImages: QuickCreateReferenceImage[] = []
+  referenceImages: QuickCreateReferenceImage[] = [],
+  expectedReferenceImageCount = referenceImages.length,
+  preserveReferenceComposition = false
 ): Promise<Buffer> {
+  assertReferenceImageCount(referenceImages, expectedReferenceImageCount);
   let lastError: unknown;
 
   for (const model of IMAGE_MODELS) {
     for (let attempt = 1; attempt <= IMAGE_GENERATION_ATTEMPTS; attempt++) {
       try {
-        const response =
-          referenceImages.length > 0
-            ? await fetch("https://api.openai.com/v1/images/edits", {
-                method: "POST",
-                headers: {
-                  Authorization: `Bearer ${ENV.openaiApiKey}`,
-                },
-                body: buildScriptoriumImageEditFormData(
-                  prompt,
-                  referenceImages,
-                  model
-                ),
-              })
-            : await fetch("https://api.openai.com/v1/images/generations", {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  Authorization: `Bearer ${ENV.openaiApiKey}`,
-                },
-                body: JSON.stringify({
-                  model,
-                  prompt,
-                  n: 1,
-                  quality: "high",
-                  size: "1024x1536",
-                }),
-              });
+        let response: Response;
+        if (referenceImages.length > 0) {
+          const formData = buildScriptoriumImageEditFormData(
+            prompt,
+            referenceImages,
+            model,
+            preserveReferenceComposition ? "auto" : "1024x1536"
+          );
+          if (
+            formData.getAll("image[]").length !== expectedReferenceImageCount
+          ) {
+            throw new Error("Not all expected reference images were attached");
+          }
+
+          console.info("Quick Create reference image edit request", {
+            model,
+            attempt,
+            referenceCount: referenceImages.length,
+            referenceHashes: referenceImages.map(image =>
+              createHash("sha256")
+                .update(image.mimeType)
+                .update(Buffer.from(image.data, "base64"))
+                .digest("hex")
+                .slice(0, 16)
+            ),
+          });
+
+          response = await fetch("https://api.openai.com/v1/images/edits", {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${ENV.openaiApiKey}`,
+            },
+            body: formData,
+          });
+        } else {
+          response = await fetch(
+            "https://api.openai.com/v1/images/generations",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${ENV.openaiApiKey}`,
+              },
+              body: JSON.stringify({
+                model,
+                prompt,
+                n: 1,
+                quality: "high",
+                size: "1024x1536",
+              }),
+            }
+          );
+        }
 
         if (!response.ok) {
           const detail = await response.text().catch(() => "");
@@ -673,13 +815,15 @@ async function generateColoringPage(
   imagePrompt: string,
   dims: SizeDimensions,
   referenceImages: QuickCreateReferenceImage[] = [],
-  preserveSource = false
+  preserveSource = false,
+  expectedReferenceImageCount = referenceImages.length
 ): Promise<Buffer> {
   const coloringPrompt = `${imagePrompt}. Style requirements: pure black-and-white line art coloring page, thick clean outlines only, no shading, no gray tones, no color fills, no background textures, high-contrast black lines on a pure white background, exceptionally crisp vector-like edges, sharply defined subjects, premium professional coloring-book quality suitable for high-resolution printing. Negative requirements: ${COLORING_NEGATIVE_PROMPT}.`;
 
   const rawBuffer = await generateCompositionImage(
     coloringPrompt,
-    referenceImages
+    referenceImages,
+    expectedReferenceImageCount
   );
 
   // Post-process to ensure clean B&W output
@@ -705,16 +849,21 @@ async function generateColoringPage(
 async function generateTextHeavyPage(
   imagePrompt: string,
   dims: SizeDimensions,
-  referenceImages: QuickCreateReferenceImage[] = []
+  referenceImages: QuickCreateReferenceImage[] = [],
+  expectedReferenceImageCount = referenceImages.length,
+  preserveReferenceComposition = false
 ): Promise<Buffer> {
   const rawBuffer = await generateCompositionImage(
     imagePrompt,
-    referenceImages
+    referenceImages,
+    expectedReferenceImageCount,
+    preserveReferenceComposition
   );
 
   return sharp(rawBuffer)
     .resize(dims.width, dims.height, {
-      fit: "fill",
+      fit: preserveReferenceComposition ? "contain" : "fill",
+      background: "#ffffff",
       kernel: sharp.kernel.lanczos3,
     })
     .png({ compressionLevel: 9 })
@@ -728,6 +877,11 @@ async function generateQuickCreatePage(
   job: GenerationJob
 ): Promise<PageResult> {
   const options = job.options as unknown as NormalizedOptions;
+  const referenceImages = options.referenceImages ?? [];
+  assertReferenceImageCount(
+    referenceImages,
+    options.expectedReferenceImageCount
+  );
   const pageNumber = pageIndex + 1;
   const dims = getSizeDimensions(options.sizePreset);
 
@@ -742,13 +896,16 @@ async function generateQuickCreatePage(
       ? await generateColoringPage(
           composition.imagePrompt,
           dims,
-          options.referenceImages,
-          options.outputStyle === "reference-coloring"
+          referenceImages,
+          options.outputStyle === "reference-coloring",
+          options.expectedReferenceImageCount
         )
       : await generateTextHeavyPage(
           composition.imagePrompt,
           dims,
-          options.referenceImages
+          referenceImages,
+          options.expectedReferenceImageCount,
+          options.referenceEnhancement
         );
 
   // Optional 4× upscale via Replicate Real-ESRGAN
@@ -866,7 +1023,7 @@ async function processQuickCreateChunkInternal(
 }
 
 export function createQuickCreateJob(options: QuickCreateOptions): string {
-  const normalizedOptions = normalizeOptions(options);
+  const normalizedOptions = normalizeQuickCreateOptions(options);
   const job = createJob(
     "quick-create",
     normalizedOptions.pageCount,
