@@ -241,7 +241,7 @@ describe("Scriptorium Quick Create", () => {
 
   it("uses the GPT image pipeline for coloring output, with or without a reference", () => {
     expect(source).toMatch(
-      /const rawBuffer = await generateCompositionImage\(\s*coloringPrompt,\s*referenceImages,\s*expectedReferenceImageCount\s*\);/
+      /const rawBuffer = await generateCompositionImage\(\s*coloringPrompt,\s*referenceImages,\s*expectedReferenceImageCount,\s*false,\s*referenceMappingMode\s*\);/
     );
     expect(source).not.toContain("fal.ai coloring-page generation failed");
     expect(source).toContain("COLORING_LINE_THRESHOLD = 180");

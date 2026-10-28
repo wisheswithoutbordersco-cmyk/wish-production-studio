@@ -122,10 +122,10 @@ describe("Quoratorium blue-violet glass theme", () => {
     expect(css).toContain('[data-slot="progress-indicator"]');
   });
 
-  it("themes all six Quick Create option groups and retains visible keyboard focus", () => {
+  it("themes Quick Create option groups and retains visible keyboard focus", () => {
     const quickCreate = source("src/pages/QuickCreateGenerator.tsx");
-    expect(quickCreate.match(/aria-pressed=/g)).toHaveLength(6);
-    expect(quickCreate.match(/className=\{toggleBtnClass\}/g)).toHaveLength(6);
+    expect(quickCreate.match(/aria-pressed=/g)).toHaveLength(8);
+    expect(quickCreate.match(/className=\{toggleBtnClass\}/g)).toHaveLength(8);
     const referenceStart = quickCreate.indexOf("{/* Reference Images */}");
     const outputStyleStart = quickCreate.indexOf(
       "{/* Output Style Toggle */}",
