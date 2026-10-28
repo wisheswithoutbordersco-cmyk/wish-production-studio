@@ -24,6 +24,7 @@ export type QuickCreateOutputStyle =
   | "full-color"
   | "coloring"
   | "reference-coloring";
+export type QuickCreateReferenceMappingMode = "guidance" | "process-steps";
 
 // ─── Size Presets ─────────────────────────────────────────────────────────────
 
@@ -60,6 +61,8 @@ export interface ScriptoriumPageContext {
   pageIndex: number;
   totalPages: number;
   branding: BrandingOption;
+  referenceMappingMode?: QuickCreateReferenceMappingMode;
+  referenceImages?: QuickCreateReferenceImage[];
 }
 
 // Sunburst is the highest-quality GPT Image 2.5 variant and is the right fit
@@ -125,13 +128,44 @@ export const SCRIPTORIUM_SYSTEM_PROMPT = getScriptoriumSystemPrompt(
   "WishesWithoutBordersCo"
 );
 
+export function buildProcessStepReferenceList(
+  referenceImages: QuickCreateReferenceImage[]
+): string {
+  return referenceImages
+    .map(
+      (image, index) =>
+        `Photo ${index + 1} → Step ${index + 1}: "${image.stepDescription?.trim() ?? ""}"`
+    )
+    .join("\n");
+}
+
+export function buildProcessStepLayoutInstructions(
+  referenceMappingMode: QuickCreateReferenceMappingMode = "guidance",
+  referenceImages: QuickCreateReferenceImage[] = []
+): string {
+  if (
+    referenceMappingMode !== "process-steps" ||
+    referenceImages.length === 0
+  ) {
+    return "";
+  }
+
+  return `\n\nORDERED PROCESS-STEP PHOTO MAPPING (follow this one-to-one order):\n${buildProcessStepReferenceList(referenceImages)}\nCreate exactly ${referenceImages.length} distinct, clearly numbered steps in ascending order. Photo N is authoritative only for Step N. Preserve the source photo's relevant objects and visual details; never omit, duplicate, merge, swap, or invent steps. Use each user-provided description verbatim as that step's instruction. Do not invent small print or barcode values that are not legible in the source; generated text and barcodes may still be inaccurate and must be checked by a person before operational use.`;
+}
+
 export function buildScriptoriumUserPrompt({
   prompt,
   pageIndex,
   totalPages,
+  referenceMappingMode,
+  referenceImages,
 }: ScriptoriumPageContext): string {
+  const processStepInstructions = buildProcessStepLayoutInstructions(
+    referenceMappingMode,
+    referenceImages
+  );
   return `USER REQUEST:
-${prompt}
+${prompt}${processStepInstructions}
 
 PAGE:
 ${pageIndex + 1} of ${totalPages}
@@ -144,7 +178,14 @@ export function buildScriptoriumFallbackPrompt({
   pageIndex,
   totalPages,
   branding,
+  referenceMappingMode,
+  referenceImages,
 }: ScriptoriumPageContext): string {
+  const processStepInstructions = buildProcessStepLayoutInstructions(
+    referenceMappingMode,
+    referenceImages
+  );
+  prompt = `${prompt}${processStepInstructions}`;
   let brandingSuffix: string;
   if (branding === "none") {
     brandingSuffix = "";
@@ -168,9 +209,10 @@ export function buildScriptoriumImageRequest(prompt: string) {
 const PAGES_PER_CHUNK = 1;
 const MAX_PAGE_COUNT = 30;
 const IMAGE_GENERATION_ATTEMPTS = 3;
-const MAX_REFERENCE_IMAGES = 4;
+const MAX_REFERENCE_IMAGES = 6;
 const MAX_REFERENCE_IMAGE_BYTES = 5 * 1024 * 1024;
-const MAX_TOTAL_REFERENCE_IMAGE_BYTES = 16 * 1024 * 1024;
+const MAX_TOTAL_REFERENCE_IMAGE_BYTES = 28 * 1024 * 1024;
+const MAX_STEP_DESCRIPTION_LENGTH = 200;
 
 const COLORING_NEGATIVE_PROMPT =
   "no text, no words, no letters, no numbers, no writing, no captions, no labels, no watermark, no signature, no blur, no distortion, no artifacts";
@@ -194,6 +236,7 @@ export interface QuickCreateOptions {
   sizePreset?: SizePreset;
   showPageNumbers?: boolean;
   upscale?: boolean;
+  referenceMappingMode?: QuickCreateReferenceMappingMode;
   referenceImages?: QuickCreateReferenceImage[];
   expectedReferenceImageCount?: number;
 }
@@ -210,6 +253,7 @@ export interface QuickCreateReferenceImage {
   data: string;
   mimeType: "image/jpeg" | "image/png" | "image/webp";
   role: ReferenceImageRole;
+  stepDescription?: string;
 }
 
 interface NormalizedOptions {
@@ -220,6 +264,7 @@ interface NormalizedOptions {
   sizePreset: SizePreset;
   showPageNumbers: boolean;
   upscale: boolean;
+  referenceMappingMode: QuickCreateReferenceMappingMode;
   referenceImages?: QuickCreateReferenceImage[];
   expectedReferenceImageCount: number;
   referenceEnhancement: boolean;
@@ -249,9 +294,16 @@ const REFERENCE_ROLE_INSTRUCTIONS: Record<ReferenceImageRole, string> = {
 };
 
 export function buildReferenceImageInstructions(
-  referenceImages: QuickCreateReferenceImage[]
+  referenceImages: QuickCreateReferenceImage[],
+  referenceMappingMode: QuickCreateReferenceMappingMode = "guidance"
 ): string {
   if (referenceImages.length === 0) return "";
+  if (referenceMappingMode === "process-steps") {
+    return buildProcessStepLayoutInstructions(
+      referenceMappingMode,
+      referenceImages
+    );
+  }
 
   const instructions = referenceImages
     .map(
@@ -338,6 +390,28 @@ function assertReferenceImageCount(
   }
 }
 
+function isStrictBase64(data: string): boolean {
+  if (data.length === 0 || data.length % 4 !== 0) return false;
+
+  const firstPaddingIndex = data.indexOf("=");
+  const payloadEnd = firstPaddingIndex === -1 ? data.length : firstPaddingIndex;
+  const paddingLength = data.length - payloadEnd;
+  if (paddingLength > 2) return false;
+  if (paddingLength === 1 && payloadEnd % 4 !== 3) return false;
+  if (paddingLength === 2 && payloadEnd % 4 !== 2) return false;
+
+  for (let index = 0; index < payloadEnd; index++) {
+    const code = data.charCodeAt(index);
+    const isLetter = (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+    const isDigit = code >= 48 && code <= 57;
+    if (!isLetter && !isDigit && code !== 43 && code !== 47) return false;
+  }
+  for (let index = payloadEnd; index < data.length; index++) {
+    if (data.charCodeAt(index) !== 61) return false;
+  }
+  return true;
+}
+
 function normalizeReferenceImages(
   input: QuickCreateOptions["referenceImages"]
 ): QuickCreateReferenceImage[] {
@@ -363,11 +437,7 @@ function normalizeReferenceImages(
     }
 
     const data = image.data.trim();
-    const isBase64 =
-      /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
-        data
-      );
-    if (!data || !isBase64) {
+    if (!isStrictBase64(data)) {
       throw new Error(
         `Reference image ${index + 1} is not valid base64 image data`
       );
@@ -375,17 +445,33 @@ function normalizeReferenceImages(
 
     const bytes = Buffer.from(data, "base64");
     if (bytes.length === 0 || bytes.length > MAX_REFERENCE_IMAGE_BYTES) {
-      throw new Error(`Each reference image must be smaller than 5 MB`);
+      throw new Error("Each reference image must be 5 MiB or smaller");
     }
     totalBytes += bytes.length;
     if (totalBytes > MAX_TOTAL_REFERENCE_IMAGE_BYTES) {
-      throw new Error("Reference images together must be smaller than 16 MB");
+      throw new Error("Reference images together must be 28 MiB or smaller");
+    }
+
+    if (
+      image.stepDescription !== undefined &&
+      typeof image.stepDescription !== "string"
+    ) {
+      throw new Error(
+        `Reference image ${index + 1} has an invalid step description`
+      );
+    }
+    const stepDescription = image.stepDescription?.trim() ?? "";
+    if (stepDescription.length > MAX_STEP_DESCRIPTION_LENGTH) {
+      throw new Error(
+        `Reference image ${index + 1} step description must be ${MAX_STEP_DESCRIPTION_LENGTH} characters or fewer`
+      );
     }
 
     return {
       data,
       mimeType: image.mimeType,
       role: image.role,
+      stepDescription,
     };
   });
 }
@@ -411,6 +497,13 @@ export function normalizeQuickCreateOptions(
   const sizePreset: SizePreset = options.sizePreset || "8.5x11-portrait";
   const showPageNumbers = options.showPageNumbers !== false;
   const upscale = options.upscale === true;
+  const referenceMappingMode = options.referenceMappingMode ?? "guidance";
+  if (
+    referenceMappingMode !== "guidance" &&
+    referenceMappingMode !== "process-steps"
+  ) {
+    throw new Error("Reference mapping mode is invalid");
+  }
   const referenceImages = normalizeReferenceImages(options.referenceImages);
   const expectedReferenceImageCount =
     options.expectedReferenceImageCount ?? referenceImages.length;
@@ -418,8 +511,27 @@ export function normalizeQuickCreateOptions(
   if (outputStyle === "reference-coloring" && referenceImages.length !== 1) {
     throw new Error("Photo-to-coloring mode requires exactly one source image");
   }
+  if (referenceMappingMode === "process-steps") {
+    if (outputStyle !== "full-color") {
+      throw new Error("Process-step mode requires full-color output");
+    }
+    if (referenceImages.length === 0) {
+      throw new Error(
+        "Process-step mode requires at least one reference photo"
+      );
+    }
+    const firstMissingDescription = referenceImages.findIndex(
+      image => !image.stepDescription?.trim()
+    );
+    if (firstMissingDescription !== -1) {
+      throw new Error(
+        `Process-step photo ${firstMissingDescription + 1} requires a step description`
+      );
+    }
+  }
   const basePrompt = rawPrompt.slice(0, 2000);
   const referenceEnhancement =
+    referenceMappingMode === "guidance" &&
     outputStyle === "full-color" &&
     referenceImages.length === 1 &&
     isGenericReferenceEnhancementPrompt(basePrompt);
@@ -433,15 +545,21 @@ export function normalizeQuickCreateOptions(
           role: "source-image" as const,
         }))
       : referenceImages;
+  const normalizedPageCount =
+    referenceMappingMode === "process-steps" ||
+    outputStyle === "reference-coloring"
+      ? 1
+      : pageCount;
 
   return {
     prompt,
-    pageCount,
+    pageCount: normalizedPageCount,
     branding,
     outputStyle,
     sizePreset,
     showPageNumbers,
     upscale,
+    referenceMappingMode,
     referenceImages: normalizedReferenceImages,
     expectedReferenceImageCount,
     referenceEnhancement,
@@ -596,6 +714,8 @@ async function generatePageComposition(
     pageIndex,
     totalPages,
     branding: options.branding,
+    referenceMappingMode: options.referenceMappingMode,
+    referenceImages: options.referenceImages,
   });
 
   try {
@@ -656,6 +776,8 @@ function buildFallbackComposition(
       pageIndex,
       totalPages,
       branding: options.branding,
+      referenceMappingMode: options.referenceMappingMode,
+      referenceImages: options.referenceImages,
     }),
   };
 }
@@ -666,7 +788,8 @@ export function buildScriptoriumImageEditFormData(
   prompt: string,
   referenceImages: QuickCreateReferenceImage[],
   model: string,
-  size: "1024x1536" | "auto" = "1024x1536"
+  size: "1024x1536" | "auto" = "1024x1536",
+  referenceMappingMode: QuickCreateReferenceMappingMode = "guidance"
 ): FormData {
   if (referenceImages.length === 0) {
     throw new Error("Image edit requests require at least one reference image");
@@ -676,7 +799,7 @@ export function buildScriptoriumImageEditFormData(
   formData.set("model", model);
   formData.set(
     "prompt",
-    `${prompt}${buildReferenceImageInstructions(referenceImages)}`
+    `${prompt}${buildReferenceImageInstructions(referenceImages, referenceMappingMode)}`
   );
   formData.set("n", "1");
   formData.set("quality", "high");
@@ -715,7 +838,8 @@ export async function generateCompositionImage(
   prompt: string,
   referenceImages: QuickCreateReferenceImage[] = [],
   expectedReferenceImageCount = referenceImages.length,
-  preserveReferenceComposition = false
+  preserveReferenceComposition = false,
+  referenceMappingMode: QuickCreateReferenceMappingMode = "guidance"
 ): Promise<Buffer> {
   assertReferenceImageCount(referenceImages, expectedReferenceImageCount);
   let lastError: unknown;
@@ -729,7 +853,8 @@ export async function generateCompositionImage(
             prompt,
             referenceImages,
             model,
-            preserveReferenceComposition ? "auto" : "1024x1536"
+            preserveReferenceComposition ? "auto" : "1024x1536",
+            referenceMappingMode
           );
           if (
             formData.getAll("image[]").length !== expectedReferenceImageCount
@@ -895,14 +1020,17 @@ async function generateColoringPage(
   dims: SizeDimensions,
   referenceImages: QuickCreateReferenceImage[] = [],
   preserveSource = false,
-  expectedReferenceImageCount = referenceImages.length
+  expectedReferenceImageCount = referenceImages.length,
+  referenceMappingMode: QuickCreateReferenceMappingMode = "guidance"
 ): Promise<Buffer> {
   const coloringPrompt = `${imagePrompt}. Style requirements: pure black-and-white line art coloring page, thick clean outlines only, no shading, no gray tones, no color fills, no background textures, high-contrast black lines on a pure white background, exceptionally crisp vector-like edges, sharply defined subjects, premium professional coloring-book quality suitable for high-resolution printing. Negative requirements: ${COLORING_NEGATIVE_PROMPT}.`;
 
   const rawBuffer = await generateCompositionImage(
     coloringPrompt,
     referenceImages,
-    expectedReferenceImageCount
+    expectedReferenceImageCount,
+    false,
+    referenceMappingMode
   );
 
   // Post-process to ensure clean B&W output
@@ -938,13 +1066,15 @@ async function generateTextHeavyPage(
   dims: SizeDimensions,
   referenceImages: QuickCreateReferenceImage[] = [],
   expectedReferenceImageCount = referenceImages.length,
-  preserveReferenceComposition = false
+  preserveReferenceComposition = false,
+  referenceMappingMode: QuickCreateReferenceMappingMode = "guidance"
 ): Promise<Buffer> {
   const rawBuffer = await generateCompositionImage(
     imagePrompt,
     referenceImages,
     expectedReferenceImageCount,
-    preserveReferenceComposition
+    preserveReferenceComposition,
+    referenceMappingMode
   );
 
   if (preserveReferenceComposition) {
@@ -995,14 +1125,16 @@ async function generateQuickCreatePage(
           dims,
           referenceImages,
           options.outputStyle === "reference-coloring",
-          options.expectedReferenceImageCount
+          options.expectedReferenceImageCount,
+          options.referenceMappingMode
         )
       : await generateTextHeavyPage(
           composition.imagePrompt,
           dims,
           referenceImages,
           options.expectedReferenceImageCount,
-          options.referenceEnhancement
+          options.referenceEnhancement,
+          options.referenceMappingMode
         );
 
   // Optional 4× upscale via Replicate Real-ESRGAN

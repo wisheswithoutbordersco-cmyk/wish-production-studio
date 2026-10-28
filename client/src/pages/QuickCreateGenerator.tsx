@@ -18,7 +18,23 @@ import {
 } from "@/components/ui/select";
 import { GenerationProgress } from "@/components/GenerationProgress";
 import { useGenerationJob } from "@/hooks/useGenerationJob";
-import { Zap, Sparkles, Download, ImagePlus, X } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import {
+  ArrowDown,
+  ArrowUp,
+  Zap,
+  Sparkles,
+  Download,
+  ImagePlus,
+  ListOrdered,
+  X,
+} from "lucide-react";
+import {
+  appendReferenceImages,
+  moveReferenceImage,
+  removeReferenceImage,
+  REFERENCE_IMAGE_CONTROL_CAPACITY,
+} from "@/lib/quickCreateReferences";
 
 const PAGE_OPTIONS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30];
 const PAGE_COUNT_STORAGE_KEY = "wish-production-studio.quick-create.page-count";
@@ -50,8 +66,9 @@ const SIZE_OPTIONS = [
 
 type SizePreset = (typeof SIZE_OPTIONS)[number]["id"];
 type QuickCreateOutputStyle = "full-color" | "coloring" | "reference-coloring";
+type ReferenceMappingMode = "guidance" | "process-steps";
 
-const MAX_REFERENCE_IMAGES = 4;
+const MAX_REFERENCE_IMAGES = 6;
 const MAX_SOURCE_IMAGE_BYTES = 25 * 1024 * 1024;
 const MAX_REFERENCE_IMAGE_BYTES = 3.5 * 1024 * 1024;
 const MAX_REFERENCE_DIMENSION = 2048;
@@ -70,6 +87,7 @@ interface ReferenceImage {
   data: string;
   mimeType: "image/jpeg";
   role: ReferenceImageRole;
+  stepDescription: string;
 }
 
 async function prepareReferenceImage(
@@ -123,7 +141,7 @@ async function prepareReferenceImage(
         "This image is still too large after compression. Try a smaller photo."
       );
     }
-    const preview = await new Promise<string>((resolve, reject) => {
+    const dataUri = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () =>
         typeof reader.result === "string"
@@ -135,10 +153,11 @@ async function prepareReferenceImage(
 
     return {
       id: `${Date.now()}-${number}-${Math.random().toString(36).slice(2)}`,
-      preview,
-      data: preview.split(",", 2)[1] ?? "",
+      preview: URL.createObjectURL(blob),
+      data: dataUri.split(",", 2)[1] ?? "",
       mimeType: "image/jpeg",
       role: "overall",
+      stepDescription: "",
     };
   } catch (error) {
     if (
@@ -158,10 +177,14 @@ async function prepareReferenceImage(
 export default function QuickCreateGenerator() {
   const [prompt, setPrompt] = useState("");
   const [referenceImages, setReferenceImages] = useState<ReferenceImage[]>([]);
+  const [referenceMappingMode, setReferenceMappingMode] =
+    useState<ReferenceMappingMode>("guidance");
   const [isPreparingReferences, setIsPreparingReferences] = useState(false);
   const [referenceError, setReferenceError] = useState<string | null>(null);
   const [referenceUploadFailed, setReferenceUploadFailed] = useState(false);
+  const [referenceStatusMessage, setReferenceStatusMessage] = useState("");
   const referenceInputRef = useRef<HTMLInputElement>(null);
+  const referencePreviewUrls = useRef(new Set<string>());
   const [pageCount, setPageCount] = useState(getSavedPageCount);
   const [branding, setBranding] = useState<
     "WishesWithoutBordersCo" | "LaneDigitalWorks" | "none"
@@ -210,16 +233,16 @@ export default function QuickCreateGenerator() {
     try {
       const filesToPrepare = files.slice(0, slots);
       for (let index = 0; index < filesToPrepare.length; index++) {
-        prepared.push(
-          await prepareReferenceImage(
-            filesToPrepare[index],
-            referenceImages.length + index + 1
-          )
+        const image = await prepareReferenceImage(
+          filesToPrepare[index],
+          referenceImages.length + index + 1
         );
+        prepared.push(image);
+        referencePreviewUrls.current.add(image.preview);
       }
       if (prepared.length > 0) {
         setReferenceImages(current =>
-          [...current, ...prepared].slice(0, MAX_REFERENCE_IMAGES)
+          appendReferenceImages(current, prepared, MAX_REFERENCE_IMAGES)
         );
       }
       if (files.length > slots) {
@@ -229,6 +252,10 @@ export default function QuickCreateGenerator() {
       }
     } catch (error) {
       setReferenceUploadFailed(true);
+      for (const image of prepared) {
+        URL.revokeObjectURL(image.preview);
+        referencePreviewUrls.current.delete(image.preview);
+      }
       setReferenceError(
         error instanceof Error
           ? error.message
@@ -238,6 +265,16 @@ export default function QuickCreateGenerator() {
       setIsPreparingReferences(false);
     }
   };
+
+  useEffect(
+    () => () => {
+      referencePreviewUrls.current.forEach(previewUrl => {
+        URL.revokeObjectURL(previewUrl);
+      });
+      referencePreviewUrls.current.clear();
+    },
+    []
+  );
 
   // Check whether Replicate is configured on the server. The endpoint
   // GET /api/env-flags is a lightweight JSON response: { replicateEnabled: bool }.
@@ -256,8 +293,19 @@ export default function QuickCreateGenerator() {
       });
   }, []);
 
+  const hasCompleteProcessSteps =
+    referenceMappingMode !== "process-steps" ||
+    (referenceImages.length > 0 &&
+      referenceImages.every(image => image.stepDescription.trim().length > 0));
+  const effectivePageCount =
+    referenceMappingMode === "process-steps" ||
+    outputStyle === "reference-coloring"
+      ? 1
+      : pageCount;
+
   const handleGenerate = () => {
     if (referenceUploadFailed) return;
+    if (!hasCompleteProcessSteps) return;
     if (!prompt.trim() && outputStyle !== "reference-coloring") return;
     if (outputStyle === "reference-coloring" && referenceImages.length !== 1) {
       return;
@@ -266,18 +314,22 @@ export default function QuickCreateGenerator() {
       customPrompt:
         prompt.trim() ||
         "Convert the uploaded source image to a clean printable monochrome coloring page.",
-      pageCount: outputStyle === "reference-coloring" ? 1 : pageCount,
+      pageCount: effectivePageCount,
       branding,
       outputStyle,
       sizePreset,
       showPageNumbers,
       upscale,
       expectedReferenceImageCount: referenceImages.length,
-      referenceImages: referenceImages.map(({ data, mimeType, role }) => ({
-        data,
-        mimeType,
-        role,
-      })),
+      referenceMappingMode,
+      referenceImages: referenceImages.map(
+        ({ data, mimeType, role, stepDescription }) => ({
+          data,
+          mimeType,
+          role,
+          stepDescription: stepDescription.trim(),
+        })
+      ),
     });
   };
 
@@ -336,10 +388,41 @@ export default function QuickCreateGenerator() {
                 {referenceImages.length}/{MAX_REFERENCE_IMAGES}
               </span>
             </div>
+            <div
+              role="group"
+              aria-label="How to use reference images"
+              className="flex flex-wrap gap-2"
+            >
+              <button
+                type="button"
+                aria-pressed={referenceMappingMode === "guidance"}
+                onClick={() => setReferenceMappingMode("guidance")}
+                disabled={isGenerating || isPreparingReferences}
+                className={toggleBtnClass}
+              >
+                General guidance
+              </button>
+              <button
+                type="button"
+                aria-pressed={referenceMappingMode === "process-steps"}
+                onClick={() => setReferenceMappingMode("process-steps")}
+                disabled={
+                  isGenerating ||
+                  isPreparingReferences ||
+                  outputStyle !== "full-color"
+                }
+                className={toggleBtnClass}
+              >
+                <ListOrdered className="mr-2 inline h-4 w-4" />
+                Numbered process steps
+              </button>
+            </div>
             <p className="text-xs text-white/55">
               {outputStyle === "reference-coloring"
                 ? "Upload exactly one image to convert. It will be treated as the source artwork, not loose inspiration, and produce one coloring page."
-                : "Add photos for identity, body/pose, style, or scene guidance. Describe what to keep and what to change in your prompt; references guide every generated page."}
+                : referenceMappingMode === "process-steps"
+                  ? "Add one photo per step. Enter each step description, then reorder photos to match the process; each photo maps to the same-numbered step. This mode creates one diagram page. Verify small text and barcodes before using the result."
+                  : "Add photos for identity, body/pose, style, or scene guidance. Describe what to keep and what to change in your prompt; references guide every generated page."}
             </p>
             <input
               ref={referenceInputRef}
@@ -378,75 +461,179 @@ export default function QuickCreateGenerator() {
             {referenceImages.map((image, index) => (
               <div
                 key={image.id}
-                className="grid grid-cols-[3.5rem_minmax(0,1fr)_2.5rem] items-center gap-3 rounded-lg border border-white/10 p-2"
+                className="grid grid-cols-[3.5rem_minmax(0,1fr)_3rem] items-start gap-3 rounded-lg border border-white/10 p-2"
               >
                 <img
                   src={image.preview}
-                  alt={`Reference ${index + 1}`}
+                  alt={`Photo ${index + 1}`}
                   className="h-14 w-14 rounded object-cover"
                 />
-                <div className="space-y-1">
-                  <Label className="text-xs text-white/65">
-                    Reference {index + 1} is for…
-                  </Label>
-                  <Select
-                    value={
-                      outputStyle === "reference-coloring"
-                        ? "source-image"
-                        : image.role
-                    }
-                    disabled={
-                      isGenerating || outputStyle === "reference-coloring"
-                    }
-                    onValueChange={value =>
-                      setReferenceImages(current =>
-                        current.map(item =>
-                          item.id === image.id
-                            ? { ...item, role: value as ReferenceImageRole }
-                            : item
-                        )
-                      )
-                    }
-                  >
-                    <SelectTrigger className="h-9 border-white/15 bg-black text-white">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="overall">
-                        Overall inspiration
-                      </SelectItem>
-                      <SelectItem value="face-identity">
-                        Face / identity
-                      </SelectItem>
-                      <SelectItem value="body-pose">Body / pose</SelectItem>
-                      <SelectItem value="style-color">
-                        Style / colors
-                      </SelectItem>
-                      <SelectItem value="object-scene">
-                        Object / scene
-                      </SelectItem>
-                      <SelectItem value="source-image">
-                        Exact source to convert
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
+                <div className="min-w-0 space-y-2">
+                  <p className="text-xs font-medium text-white/75">
+                    {referenceMappingMode === "process-steps"
+                      ? `Photo ${index + 1} → Step ${index + 1}`
+                      : outputStyle === "reference-coloring"
+                        ? `Photo ${index + 1} · exact source to convert`
+                        : `Reference ${index + 1} is for…`}
+                  </p>
+                  {referenceMappingMode === "process-steps" ? (
+                    <div className="space-y-1">
+                      <Label
+                        htmlFor={`quick-step-description-${image.id}`}
+                        className="text-xs text-white/65"
+                      >
+                        Step {index + 1} description (required)
+                      </Label>
+                      <Input
+                        id={`quick-step-description-${image.id}`}
+                        value={image.stepDescription}
+                        maxLength={200}
+                        onChange={event =>
+                          setReferenceImages(current =>
+                            current.map(item =>
+                              item.id === image.id
+                                ? {
+                                    ...item,
+                                    stepDescription: event.target.value,
+                                  }
+                                : item
+                            )
+                          )
+                        }
+                        disabled={isGenerating || isPreparingReferences}
+                        placeholder={`Describe step ${index + 1}`}
+                        className="h-11 w-full"
+                      />
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      <Label
+                        htmlFor={`quick-reference-role-${image.id}`}
+                        className="text-xs text-white/65"
+                      >
+                        Reference role
+                      </Label>
+                      <Select
+                        value={
+                          outputStyle === "reference-coloring"
+                            ? "source-image"
+                            : image.role
+                        }
+                        disabled={
+                          isGenerating || outputStyle === "reference-coloring"
+                        }
+                        onValueChange={value =>
+                          setReferenceImages(current =>
+                            current.map(item =>
+                              item.id === image.id
+                                ? { ...item, role: value as ReferenceImageRole }
+                                : item
+                            )
+                          )
+                        }
+                      >
+                        <SelectTrigger
+                          id={`quick-reference-role-${image.id}`}
+                          className="h-11 border-white/15 bg-black text-white"
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="overall">
+                            Overall inspiration
+                          </SelectItem>
+                          <SelectItem value="face-identity">
+                            Face / identity
+                          </SelectItem>
+                          <SelectItem value="body-pose">Body / pose</SelectItem>
+                          <SelectItem value="style-color">
+                            Style / colors
+                          </SelectItem>
+                          <SelectItem value="object-scene">
+                            Object / scene
+                          </SelectItem>
+                          <SelectItem value="source-image">
+                            Exact source to convert
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                 </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  aria-label={`Remove reference ${index + 1}`}
-                  disabled={isGenerating}
-                  onClick={() =>
-                    setReferenceImages(current =>
-                      current.filter(item => item.id !== image.id)
-                    )
-                  }
-                >
-                  <X className="h-4 w-4" />
-                </Button>
+                <div className="flex flex-col gap-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-11 w-11 shrink-0"
+                    aria-label={`Move Photo ${index + 1} earlier`}
+                    disabled={
+                      isGenerating ||
+                      isPreparingReferences ||
+                      index === 0 ||
+                      referenceImages.length > REFERENCE_IMAGE_CONTROL_CAPACITY
+                    }
+                    onClick={() => {
+                      setReferenceImages(current =>
+                        moveReferenceImage(current, image.id, "earlier")
+                      );
+                      setReferenceStatusMessage(
+                        `Photo ${index + 1} moved earlier and remains paired with its step description.`
+                      );
+                    }}
+                  >
+                    <ArrowUp className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-11 w-11 shrink-0"
+                    aria-label={`Move Photo ${index + 1} later`}
+                    disabled={
+                      isGenerating ||
+                      isPreparingReferences ||
+                      index === referenceImages.length - 1 ||
+                      referenceImages.length > REFERENCE_IMAGE_CONTROL_CAPACITY
+                    }
+                    onClick={() => {
+                      setReferenceImages(current =>
+                        moveReferenceImage(current, image.id, "later")
+                      );
+                      setReferenceStatusMessage(
+                        `Photo ${index + 1} moved later and remains paired with its step description.`
+                      );
+                    }}
+                  >
+                    <ArrowDown className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-11 w-11 shrink-0"
+                    aria-label={`Remove Photo ${index + 1}`}
+                    disabled={isGenerating || isPreparingReferences}
+                    onClick={() => {
+                      setReferenceImages(current =>
+                        removeReferenceImage(current, image.id)
+                      );
+                      URL.revokeObjectURL(image.preview);
+                      referencePreviewUrls.current.delete(image.preview);
+                      setReferenceError(null);
+                      setReferenceStatusMessage(
+                        `Removed Photo ${index + 1}. Remaining photos and step descriptions were renumbered together.`
+                      );
+                    }}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
             ))}
+            <p role="status" aria-live="polite" className="sr-only">
+              {referenceStatusMessage}
+            </p>
             {referenceError && (
               <p role="alert" className="text-xs text-red-300">
                 {referenceError}
@@ -473,10 +660,18 @@ export default function QuickCreateGenerator() {
                 <button
                   key={opt.id}
                   type="button"
-                  onClick={() =>
-                    setOutputStyle(opt.id as QuickCreateOutputStyle)
+                  onClick={() => {
+                    const nextStyle = opt.id as QuickCreateOutputStyle;
+                    setOutputStyle(nextStyle);
+                    if (nextStyle === "reference-coloring") {
+                      setReferenceMappingMode("guidance");
+                    }
+                  }}
+                  disabled={
+                    isGenerating ||
+                    (referenceMappingMode === "process-steps" &&
+                      opt.id !== "full-color")
                   }
-                  disabled={isGenerating}
                   aria-pressed={outputStyle === opt.id}
                   className={toggleBtnClass}
                 >
@@ -581,9 +776,7 @@ export default function QuickCreateGenerator() {
 
           {/* Page Count Buttons */}
           <div className="space-y-2">
-            <Label>
-              Pages: {outputStyle === "reference-coloring" ? 1 : pageCount}
-            </Label>
+            <Label>Pages: {effectivePageCount}</Label>
             <div className="flex flex-wrap gap-2">
               {PAGE_OPTIONS.map(n => (
                 <button
@@ -591,9 +784,12 @@ export default function QuickCreateGenerator() {
                   type="button"
                   onClick={() => setPageCount(n)}
                   disabled={
-                    isGenerating || outputStyle === "reference-coloring"
+                    isGenerating ||
+                    referenceMappingMode === "process-steps" ||
+                    outputStyle === "reference-coloring"
                   }
                   aria-pressed={
+                    referenceMappingMode === "process-steps" ||
                     outputStyle === "reference-coloring"
                       ? n === 1
                       : pageCount === n
@@ -613,6 +809,7 @@ export default function QuickCreateGenerator() {
               isGenerating ||
               isPreparingReferences ||
               referenceUploadFailed ||
+              !hasCompleteProcessSteps ||
               (!prompt.trim() && outputStyle !== "reference-coloring") ||
               (outputStyle === "reference-coloring" &&
                 referenceImages.length !== 1)
@@ -623,7 +820,7 @@ export default function QuickCreateGenerator() {
             <Sparkles className="h-4 w-4 mr-2" />
             {isGenerating
               ? "Generating..."
-              : `Generate ${outputStyle === "reference-coloring" ? 1 : pageCount} Page${outputStyle === "reference-coloring" || pageCount === 1 ? "" : "s"}`}
+              : `Generate ${effectivePageCount} Page${effectivePageCount === 1 ? "" : "s"}`}
           </Button>
         </CardContent>
       </Card>
@@ -655,8 +852,7 @@ export default function QuickCreateGenerator() {
                 productMeta={{
                   title: prompt.slice(0, 60) || "Quick Create",
                   type: "Quick Create",
-                  pageCount:
-                    outputStyle === "reference-coloring" ? 1 : pageCount,
+                  pageCount: effectivePageCount,
                 }}
               />
 
