@@ -12,6 +12,7 @@ import type { TrpcContext } from "./context";
 import { ENV } from "./env";
 import { serveStatic, setupVite } from "./vite";
 import { generationRouter } from "../generationRoutes";
+import { ownerGate } from "./ownerGate";
 
 function isOAuthConfigured(): boolean {
   return Boolean(ENV.oAuthServerUrl && ENV.appId && ENV.cookieSecret);
@@ -36,6 +37,7 @@ async function startServer() {
   const app = express();
   const server = createServer(app);
 
+  app.use(ownerGate);
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
@@ -43,7 +45,7 @@ async function startServer() {
   // Retained for compatibility but inactive unless OAuth variables are present.
   registerOAuthRoutes(app);
 
-  // Generation job routes are deliberately public.
+  // Generation routes are private behind the owner gate above.
   app.use(generationRouter);
 
   app.use(
