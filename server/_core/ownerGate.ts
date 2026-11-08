@@ -130,6 +130,20 @@ function isApiPath(path: string): boolean {
   return path === "/api" || path.startsWith("/api/");
 }
 
+const PUBLIC_PATHS = new Set([
+  "/manifest.webmanifest",
+  "/icon-512.png",
+  "/icon-192.png",
+  "/apple-touch-icon.png",
+]);
+
+function isPublicPath(req: Request): boolean {
+  return (
+    (req.method === "GET" || req.method === "HEAD") &&
+    PUBLIC_PATHS.has(req.path)
+  );
+}
+
 function isSecureRequest(req: Request): boolean {
   const forwardedProto = req.get("x-forwarded-proto")?.split(",")[0].trim();
   return req.secure || forwardedProto === "https";
@@ -144,6 +158,11 @@ export function createOwnerGate(
 ): RequestHandler {
   return (req, res, next) => {
     applySecurityHeaders(res);
+    if (isPublicPath(req)) {
+      next();
+      return;
+    }
+
     const password = readPassword();
     if (!password) {
       res
