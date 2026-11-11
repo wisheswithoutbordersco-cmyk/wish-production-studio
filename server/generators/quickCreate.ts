@@ -65,10 +65,10 @@ export interface ScriptoriumPageContext {
   referenceImages?: QuickCreateReferenceImage[];
 }
 
-// Sunburst is the highest-quality GPT Image 2.5 variant and is the right fit
+// Sunburst is the highest-quality GPT Image 2.6 variant and is the right fit
 // for text-heavy, full-color printable publications. Keep GPT Image 2 as a
-// one-step compatibility fallback while the newer model rolls out.
-export const SCRIPTORIUM_IMAGE_MODEL = "gpt-image-2.5-sunburst";
+// one-step compatibility fallback when Sunburst is unavailable.
+export const SCRIPTORIUM_IMAGE_MODEL = "gpt-image-2.6-sunburst";
 export const SCRIPTORIUM_IMAGE_FALLBACK_MODEL = "gpt-image-2";
 const IMAGE_MODELS = [
   SCRIPTORIUM_IMAGE_MODEL,
