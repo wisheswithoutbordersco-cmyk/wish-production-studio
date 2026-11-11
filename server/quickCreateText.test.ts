@@ -247,13 +247,13 @@ describe("Scriptorium Quick Create", () => {
     expect(source).toContain("COLORING_LINE_THRESHOLD = 180");
   });
 
-  it("uses GPT Image 2.5 Sunburst for premium publishing images", () => {
-    expect(SCRIPTORIUM_IMAGE_MODEL).toBe("gpt-image-2.5-sunburst");
+  it("uses GPT Image 2.6 Sunburst for premium publishing images", () => {
+    expect(SCRIPTORIUM_IMAGE_MODEL).toBe("gpt-image-2.6-sunburst");
 
     const request = buildScriptoriumImageRequest(
       "A polished ocean activity book page"
     );
-    expect(request.model).toBe("gpt-image-2.5-sunburst");
+    expect(request.model).toBe("gpt-image-2.6-sunburst");
     expect(request.quality).toBe("high");
     expect(request.background).toBe("opaque");
   });
