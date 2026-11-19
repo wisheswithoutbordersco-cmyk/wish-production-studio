@@ -3,13 +3,14 @@
  * Supports both programmatically typeset products and raw full-page image
  * products whose typography and branding are already baked into the artwork.
  *
- * Output: 8.5x11 inches (612x792 points at 72 DPI)
+ * Default output: 8.5x11 inches (612x792 points at 72 DPI); callers may pass a
+ * different page size for formats such as KDP paperback interiors and covers.
  */
 import PDFDocument from "pdfkit";
 import sharp from "sharp";
 
-const PAGE_WIDTH = 612;  // 8.5 inches at 72 DPI
-const PAGE_HEIGHT = 792; // 11 inches at 72 DPI
+const DEFAULT_PAGE_WIDTH = 612;  // 8.5 inches at 72 DPI
+const DEFAULT_PAGE_HEIGHT = 792; // 11 inches at 72 DPI
 const MARGIN = 36;       // 0.5 inch margins
 
 export interface PageContent {
@@ -102,8 +103,12 @@ function parseColorWithAlpha(input: string): { color: string; opacity: number } 
 export async function assemblePdf(
   pages: PageContent[],
   brandingText?: "WishesWithoutBordersCo" | "LaneDigitalWorks" | "off" | string,
-  showPageNumbers: boolean = true
+  showPageNumbers: boolean = true,
+  pageSizePoints?: { width: number; height: number }
 ): Promise<Buffer> {
+  const PAGE_WIDTH = pageSizePoints?.width ?? DEFAULT_PAGE_WIDTH;
+  const PAGE_HEIGHT = pageSizePoints?.height ?? DEFAULT_PAGE_HEIGHT;
+
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
       size: [PAGE_WIDTH, PAGE_HEIGHT],
@@ -365,7 +370,10 @@ export async function assemblePdf(
  * This prevents Supabase upload size errors on multi-page PDFs (30 pages).
  * A 30-page PDF stays under ~15MB instead of 90-150MB with raw PNGs.
  */
-export async function fetchImageBuffer(url: string): Promise<Buffer> {
+export async function fetchImageBuffer(
+  url: string,
+  options: { maxDimension?: number; jpegQuality?: number } = {}
+): Promise<Buffer> {
   // Handle relative URLs (from our storage) - always resolve against localhost
   let fullUrl = url;
   if (url.startsWith("/")) {
@@ -379,11 +387,19 @@ export async function fetchImageBuffer(url: string): Promise<Buffer> {
   const arrayBuffer = await response.arrayBuffer();
   const rawBuffer = Buffer.from(arrayBuffer);
 
-  // Compress image to keep PDF size manageable for upload
+  // Compress ordinary PDF images to keep uploads manageable. KDP print exports
+  // can disable the dimension cap to retain the original 300-DPI page pixels.
   try {
-    const compressed = await sharp(rawBuffer)
-      .resize(2048, 2048, { fit: "inside", withoutEnlargement: true })
-      .jpeg({ quality: 80, progressive: true })
+    let pipeline = sharp(rawBuffer);
+    if (options.maxDimension !== 0) {
+      const maxDimension = options.maxDimension ?? 2048;
+      pipeline = pipeline.resize(maxDimension, maxDimension, {
+        fit: "inside",
+        withoutEnlargement: true,
+      });
+    }
+    const compressed = await pipeline
+      .jpeg({ quality: options.jpegQuality ?? 80, progressive: true })
       .toBuffer();
     return compressed;
   } catch {

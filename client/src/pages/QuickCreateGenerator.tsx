@@ -36,7 +36,20 @@ import {
   REFERENCE_IMAGE_CONTROL_CAPACITY,
 } from "@/lib/quickCreateReferences";
 
-const PAGE_OPTIONS = [1, 2, 3, 4, 5, 10, 15, 20, 25, 30];
+const PAGE_OPTIONS = [1, 2, 3, 4, 5, 10, 15, 20, 24, 25, 26, 28, 30];
+const KDP_PAGE_OPTIONS = [24, 26, 28];
+const KDP_TRIM_OPTIONS = [
+  { id: "6x9", label: "6 × 9 in · Portrait" },
+  { id: "8.5x11", label: "8.5 × 11 in · Portrait" },
+  { id: "8.5x8.5", label: "8.5 × 8.5 in · Square" },
+  { id: "8.5x6-landscape", label: "8.5 × 6 in · Landscape" },
+] as const;
+const KDP_PAPER_OPTIONS = [
+  { id: "premium-color", label: "Premium color · white paper" },
+  { id: "standard-color", label: "Standard color · white paper" },
+  { id: "black-white-white", label: "Black ink · white paper" },
+  { id: "black-white-cream", label: "Black ink · cream paper" },
+] as const;
 const PAGE_COUNT_STORAGE_KEY = "wish-production-studio.quick-create.page-count";
 
 function getSavedPageCount() {
@@ -65,6 +78,8 @@ const SIZE_OPTIONS = [
 ] as const;
 
 type SizePreset = (typeof SIZE_OPTIONS)[number]["id"];
+type KdpTrimPreset = (typeof KDP_TRIM_OPTIONS)[number]["id"];
+type KdpPaperType = (typeof KDP_PAPER_OPTIONS)[number]["id"];
 type QuickCreateOutputStyle = "full-color" | "coloring" | "reference-coloring";
 type ReferenceMappingMode = "guidance" | "process-steps";
 
@@ -192,6 +207,11 @@ export default function QuickCreateGenerator() {
   const [outputStyle, setOutputStyle] =
     useState<QuickCreateOutputStyle>("full-color");
   const [sizePreset, setSizePreset] = useState<SizePreset>("8.5x11-portrait");
+  const [kdpPaperback, setKdpPaperback] = useState(false);
+  const [kdpTrimPreset, setKdpTrimPreset] =
+    useState<KdpTrimPreset>("8.5x6-landscape");
+  const [kdpPaperType, setKdpPaperType] =
+    useState<KdpPaperType>("premium-color");
   const [showPageNumbers, setShowPageNumbers] = useState(false);
   const [upscale, setUpscale] = useState(true);
   // Whether the server has REPLICATE_API_TOKEN — checked via a lightweight env
@@ -303,6 +323,13 @@ export default function QuickCreateGenerator() {
       ? 1
       : pageCount;
 
+  const handleKdpModeChange = (enabled: boolean) => {
+    setKdpPaperback(enabled);
+    if (enabled && !KDP_PAGE_OPTIONS.includes(pageCount)) {
+      setPageCount(24);
+    }
+  };
+
   const handleGenerate = () => {
     if (referenceUploadFailed) return;
     if (!hasCompleteProcessSteps) return;
@@ -318,6 +345,9 @@ export default function QuickCreateGenerator() {
       branding,
       outputStyle,
       sizePreset,
+      kdpPaperback,
+      kdpTrimPreset,
+      kdpPaperType,
       showPageNumbers,
       upscale,
       expectedReferenceImageCount: referenceImages.length,
@@ -409,7 +439,8 @@ export default function QuickCreateGenerator() {
                 disabled={
                   isGenerating ||
                   isPreparingReferences ||
-                  outputStyle !== "full-color"
+                  outputStyle !== "full-color" ||
+                  kdpPaperback
                 }
                 className={toggleBtnClass}
               >
@@ -648,6 +679,86 @@ export default function QuickCreateGenerator() {
             </p>
           </div>
 
+          {/* Publishing Format */}
+          <div className="space-y-2">
+            <Label>Publishing Format</Label>
+            <div className="flex flex-wrap gap-2" role="group" aria-label="Publishing format">
+              <button
+                type="button"
+                aria-pressed={!kdpPaperback}
+                onClick={() => handleKdpModeChange(false)}
+                disabled={isGenerating}
+                className={toggleBtnClass}
+              >
+                Standard
+              </button>
+              <button
+                type="button"
+                aria-pressed={kdpPaperback}
+                onClick={() => handleKdpModeChange(true)}
+                disabled={
+                  isGenerating ||
+                  outputStyle === "reference-coloring" ||
+                  referenceMappingMode === "process-steps"
+                }
+                className={toggleBtnClass}
+              >
+                KDP Paperback
+              </button>
+            </div>
+            {kdpPaperback && (
+              <div className="space-y-3 rounded-md border border-white/10 bg-black/20 p-3">
+                <p className="text-xs leading-relaxed text-white/60">
+                  Creates 24, 26, or 28 interior pages with paperback bleed, plus a separate full-wrap cover PDF. The first generated image is the front cover; the back and spine are blank for KDP’s barcode (spine text is not supported for these page counts). Include the exact book title and author in your prompt, then proofread the generated lettering. Choose the same trim and paper options you will select in KDP. Add page numbers in the artwork; PDF overlays are disabled. Review both files in KDP’s Print Previewer before publishing, since generated content still needs your review.
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="quick-kdp-trim" className="text-xs text-white/65">
+                      Paperback trim size
+                    </Label>
+                    <Select
+                      value={kdpTrimPreset}
+                      onValueChange={value => setKdpTrimPreset(value as KdpTrimPreset)}
+                      disabled={isGenerating}
+                    >
+                      <SelectTrigger id="quick-kdp-trim" className="h-11 border-white/15 bg-black text-white">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {KDP_TRIM_OPTIONS.map(option => (
+                          <SelectItem key={option.id} value={option.id}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="quick-kdp-paper" className="text-xs text-white/65">
+                      Ink and paper
+                    </Label>
+                    <Select
+                      value={kdpPaperType}
+                      onValueChange={value => setKdpPaperType(value as KdpPaperType)}
+                      disabled={isGenerating}
+                    >
+                      <SelectTrigger id="quick-kdp-paper" className="h-11 border-white/15 bg-black text-white">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {KDP_PAPER_OPTIONS.map(option => (
+                          <SelectItem key={option.id} value={option.id}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Output Style Toggle */}
           <div className="space-y-2">
             <Label>Output Style</Label>
@@ -670,7 +781,8 @@ export default function QuickCreateGenerator() {
                   disabled={
                     isGenerating ||
                     (referenceMappingMode === "process-steps" &&
-                      opt.id !== "full-color")
+                      opt.id !== "full-color") ||
+                    (kdpPaperback && opt.id === "reference-coloring")
                   }
                   aria-pressed={outputStyle === opt.id}
                   className={toggleBtnClass}
@@ -681,24 +793,26 @@ export default function QuickCreateGenerator() {
             </div>
           </div>
 
-          {/* Size Preset */}
-          <div className="space-y-2">
-            <Label>Size</Label>
-            <div className="flex flex-wrap gap-2">
-              {SIZE_OPTIONS.map(opt => (
-                <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => setSizePreset(opt.id)}
-                  disabled={isGenerating}
-                  aria-pressed={sizePreset === opt.id}
-                  className={toggleBtnClass}
-                >
-                  {opt.label}
-                </button>
-              ))}
+          {/* Standard Size Preset */}
+          {!kdpPaperback && (
+            <div className="space-y-2">
+              <Label>Size</Label>
+              <div className="flex flex-wrap gap-2">
+                {SIZE_OPTIONS.map(opt => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setSizePreset(opt.id)}
+                    disabled={isGenerating}
+                    aria-pressed={sizePreset === opt.id}
+                    className={toggleBtnClass}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Brand Watermark Toggle */}
           <div className="space-y-2">
@@ -735,7 +849,7 @@ export default function QuickCreateGenerator() {
                   key={opt.id}
                   type="button"
                   onClick={() => setShowPageNumbers(opt.id === "on")}
-                  disabled={isGenerating}
+                  disabled={isGenerating || kdpPaperback}
                   aria-pressed={showPageNumbers === (opt.id === "on")}
                   className={toggleBtnClass}
                 >
@@ -776,9 +890,13 @@ export default function QuickCreateGenerator() {
 
           {/* Page Count Buttons */}
           <div className="space-y-2">
-            <Label>Pages: {effectivePageCount}</Label>
+            <Label>
+              {kdpPaperback
+                ? `Interior pages: ${effectivePageCount} + separate cover`
+                : `Pages: ${effectivePageCount}`}
+            </Label>
             <div className="flex flex-wrap gap-2">
-              {PAGE_OPTIONS.map(n => (
+              {(kdpPaperback ? KDP_PAGE_OPTIONS : PAGE_OPTIONS).map(n => (
                 <button
                   key={n}
                   type="button"

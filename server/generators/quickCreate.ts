@@ -10,8 +10,20 @@ import {
   type GenerationJob,
   type PageResult,
 } from "../jobs";
+import { fetchImageBuffer } from "../pdfAssembly";
 import { storagePut } from "../storage";
 import { finalizePdf } from "./shared";
+import {
+  addKdpInteriorBleed,
+  createKdpPaperbackCoverPdf,
+  getKdpInteriorBleedGeometry,
+  isKdpPaperType,
+  isKdpTrimPreset,
+  KDP_PAPER_TYPES,
+  KDP_TRIM_SIZES,
+  type KdpPaperType,
+  type KdpTrimPreset,
+} from "./kdp";
 
 // ─── Branding Types ──────────────────────────────────────────────────────────
 
@@ -33,7 +45,11 @@ export type SizePreset =
   | "8.5x11-landscape"
   | "11x14"
   | "16x20"
-  | "square";
+  | "square"
+  | "kdp-6x9"
+  | "kdp-8.5x11"
+  | "kdp-8.5x8.5"
+  | "kdp-8.5x6-landscape";
 
 interface SizeDimensions {
   width: number; // pixels at 300 DPI
@@ -47,6 +63,21 @@ const SIZE_PRESETS: Record<SizePreset, SizeDimensions> = {
   "11x14": { width: 3300, height: 4200, label: "11×14 portrait" },
   "16x20": { width: 4800, height: 6000, label: "16×20 portrait" },
   square: { width: 3000, height: 3000, label: "10×10 square" },
+  "kdp-6x9": { width: 1800, height: 2700, label: "6×9 portrait" },
+  "kdp-8.5x11": { width: 2550, height: 3300, label: "8.5×11 portrait" },
+  "kdp-8.5x8.5": { width: 2550, height: 2550, label: "8.5×8.5 square" },
+  "kdp-8.5x6-landscape": {
+    width: 2550,
+    height: 1800,
+    label: "8.5×6 landscape",
+  },
+};
+
+const KDP_SIZE_PRESETS: Record<KdpTrimPreset, SizePreset> = {
+  "6x9": "kdp-6x9",
+  "8.5x11": "kdp-8.5x11",
+  "8.5x8.5": "kdp-8.5x8.5",
+  "8.5x6-landscape": "kdp-8.5x6-landscape",
 };
 
 function getSizeDimensions(preset: SizePreset): SizeDimensions {
@@ -61,6 +92,8 @@ export interface ScriptoriumPageContext {
   pageIndex: number;
   totalPages: number;
   branding: BrandingOption;
+  sizeLabel?: string;
+  kdpPageType?: "cover" | "interior";
   referenceMappingMode?: QuickCreateReferenceMappingMode;
   referenceImages?: QuickCreateReferenceImage[];
 }
@@ -80,9 +113,14 @@ export const SCRIPTORIUM_RENDER_QUALITY =
 
 // ─── Dynamic System Prompt ────────────────────────────────────────────────────
 
-export function getScriptoriumSystemPrompt(branding: BrandingOption): string {
+export function getScriptoriumSystemPrompt(
+  branding: BrandingOption,
+  sizeLabel = "8.5×11 portrait",
+  kdpPageType?: "cover" | "interior"
+): string {
   let brandingLine1: string;
   let brandingLine2: string;
+  let pageLayoutInstruction: string;
 
   if (branding === "none") {
     brandingLine1 = "";
@@ -90,6 +128,14 @@ export function getScriptoriumSystemPrompt(branding: BrandingOption): string {
   } else {
     brandingLine1 = `\n- Footer branding with the exact text "${branding}"`;
     brandingLine2 = `\n- Always include "${branding}" as small, legible footer branding text`;
+  }
+
+  if (kdpPageType === "cover") {
+    pageLayoutInstruction = `Create one finished front-cover panel at the selected ${sizeLabel} trim ratio. Do not depict a wraparound cover, back, spine, barcode, book mockup, or surrounding scene. Keep the title, author text, faces, and other essential details at least 0.375 inches inside every trim edge.`;
+  } else if (kdpPageType === "interior") {
+    pageLayoutInstruction = `Create one complete interior page at the selected ${sizeLabel} trim size. Keep all text and important details at least 0.375 inches inside every trim edge; artwork may continue to the page edge and into bleed.`;
+  } else {
+    pageLayoutInstruction = `Describe ONE complete, flat, full-page image at ${sizeLabel}`;
   }
 
   return `You are an expert publishing art director and product designer creating prompts for AI image generation of professional printable books, workbooks, journals, planners, trackers, guides, activity products, and other page-based publications.
@@ -108,7 +154,7 @@ Given the user\'s request, create a detailed image-generation prompt for ONE COM
 - Purposeful illustrations, characters, icons, charts, or decorative elements when they support the product${brandingLine1}
 
 RULES:
-- Describe ONE complete, flat, full-page image at 8.5x11 inches in portrait orientation
+- ${pageLayoutInstruction}
 - Fill the entire canvas edge-to-edge; never depict a photographed sheet, mockup, framed object, or page placed on another background
 - Follow the user\'s requested format and content literally; do not inject generic educational material or unrelated school exercises
 - Include an amount of content appropriate to the page\'s purpose. Do not force a fixed number of questions, blanks, panels, or activities
@@ -157,6 +203,8 @@ export function buildScriptoriumUserPrompt({
   prompt,
   pageIndex,
   totalPages,
+  sizeLabel = "8.5×11 portrait",
+  kdpPageType,
   referenceMappingMode,
   referenceImages,
 }: ScriptoriumPageContext): string {
@@ -164,11 +212,19 @@ export function buildScriptoriumUserPrompt({
     referenceMappingMode,
     referenceImages
   );
+  const kdpPageInstructions = kdpPageType === "cover"
+    ? `\n\nKDP FRONT COVER: Create a single front-cover panel for a paperback, at ${sizeLabel}. Keep important cover elements at least 0.375 inches inside the trim edges. Do not create a wraparound cover or include the back, spine, barcode, or mockup.`
+    : kdpPageType === "interior"
+      ? `\n\nKDP INTERIOR: This page is ${sizeLabel}. Keep important text and details at least 0.375 inches inside trim edges; artwork can continue into bleed.`
+      : "";
+  const pageDescription = kdpPageType === "cover"
+    ? "Separate front-cover panel"
+    : `Page ${pageIndex + 1} of ${totalPages}`;
   return `USER REQUEST:
-${prompt}${processStepInstructions}
+${prompt}${processStepInstructions}${kdpPageInstructions}
 
 PAGE:
-${pageIndex + 1} of ${totalPages}
+${pageDescription}
 
 The user request above is the sole source of product type, audience, complexity, tone, and purpose. Create the complete image composition prompt for this page. Ensure its content and visual treatment are unique to this page while remaining consistent with the requested product. For a full-color page, require bold saturated vivid colors, high contrast, and a rich vibrant palette; explicitly avoid beige, cream, muted earth tones, dusty, desaturated, washed-out, and soft pastel color treatments unless the user requested them.`;
 }
@@ -178,6 +234,8 @@ export function buildScriptoriumFallbackPrompt({
   pageIndex,
   totalPages,
   branding,
+  sizeLabel = "8.5×11 portrait",
+  kdpPageType,
   referenceMappingMode,
   referenceImages,
 }: ScriptoriumPageContext): string {
@@ -193,14 +251,29 @@ export function buildScriptoriumFallbackPrompt({
     brandingSuffix = ` Add the exact small footer branding text "${branding}".`;
   }
 
-  return `Create ONE complete, flat, full-page professional publication page based exactly on this request: "${prompt}". Infer the product type, audience, complexity, tone, and purpose solely from the user\'s words. This is page ${pageIndex + 1} of ${totalPages}. Preserve the requested product type and use the structure, content, fields, copy, and page conventions that genuinely belong to it. Do not turn the request into a school worksheet, quiz, lesson, math exercise, or answer-blank activity unless the user explicitly requested that format. Use an 8.5x11-inch portrait composition filling the entire canvas edge-to-edge, never a photographed paper, mockup, frame, or page on a background. Render all necessary page text directly in the image with correct spelling and a polished font hierarchy. For a full-color page, use bold saturated vivid colors, high contrast, a rich vibrant palette, and intense clean color separation. Avoid beige, cream, muted earth tones, dusty colors, desaturated or washed-out color, and soft pastel palettes unless the user explicitly requested them. Use crisp typography, clean edges, sharply defined illustrations or characters when appropriate, balanced spacing, and refined subject-relevant visual details. Make the result look like a premium, vibrant, professionally published, print-ready product.${brandingSuffix}`;
+  const fallback = `Create ONE complete, flat, full-page professional publication page based exactly on this request: "${prompt}". Infer the product type, audience, complexity, tone, and purpose solely from the user\'s words. This is page ${pageIndex + 1} of ${totalPages}. Preserve the requested product type and use the structure, content, fields, copy, and page conventions that genuinely belong to it. Do not turn the request into a school worksheet, quiz, lesson, math exercise, or answer-blank activity unless the user explicitly requested that format. Use an 8.5x11-inch portrait composition filling the entire canvas edge-to-edge, never a photographed paper, mockup, frame, or page on a background. Render all necessary page text directly in the image with correct spelling and a polished font hierarchy. For a full-color page, use bold saturated vivid colors, high contrast, a rich vibrant palette, and intense clean color separation. Avoid beige, cream, muted earth tones, dusty colors, desaturated or washed-out color, and soft pastel palettes unless the user explicitly requested them. Use crisp typography, clean edges, sharply defined illustrations or characters when appropriate, balanced spacing, and refined subject-relevant visual details. Make the result look like a premium, vibrant, professionally published, print-ready product.${brandingSuffix}`;
+  const pageRoleInstruction = kdpPageType === "cover"
+    ? "Create a separate paperback front-cover panel; do not depict the back, spine, barcode, or a mockup. Keep essential cover text and details at least 0.375 inches inside trim edges."
+    : kdpPageType === "interior"
+      ? "This is a KDP paperback interior page; keep important text and details at least 0.375 inches inside trim edges."
+      : `This is page ${pageIndex + 1} of ${totalPages}.`;
+  return fallback
+    .replace("Use an 8.5x11-inch portrait composition", `Use a ${sizeLabel} composition`)
+    .replace(`This is page ${pageIndex + 1} of ${totalPages}.`, pageRoleInstruction);
 }
 
-export function buildScriptoriumImageRequest(prompt: string) {
+export type ImageGenerationSize = "1024x1536" | "1536x1024" | "1024x1024" | "auto";
+
+export function buildScriptoriumImageRequest(
+  prompt: string,
+  size: ImageGenerationSize = "1024x1536",
+  sizeLabel = "8.5×11 portrait"
+) {
   return {
     model: SCRIPTORIUM_IMAGE_MODEL,
-    prompt: `${prompt}\n\nRENDER QUALITY REQUIREMENTS: ${SCRIPTORIUM_RENDER_QUALITY}. Render as one complete 8.5x11-inch portrait page, edge-to-edge. For full-color artwork, push color intensity hard: bold saturated vivid colors, high contrast, and a rich vibrant palette, never a muted beige, cream, earth-tone, dusty, desaturated, washed-out, or soft pastel treatment unless explicitly requested by the user.`,
+    prompt: `${prompt}\n\nRENDER QUALITY REQUIREMENTS: ${SCRIPTORIUM_RENDER_QUALITY}. Render as one complete ${sizeLabel} page, edge-to-edge, matching its orientation. For full-color artwork, push color intensity hard: bold saturated vivid colors, high contrast, and a rich vibrant palette, never a muted beige, cream, earth-tone, dusty, desaturated, washed-out, or soft pastel treatment unless explicitly requested by the user.`,
     n: 1,
+    size,
     quality: "high" as const,
     background: "opaque" as const,
   };
@@ -234,6 +307,9 @@ export interface QuickCreateOptions {
   branding?: BrandingOption;
   outputStyle?: QuickCreateOutputStyle;
   sizePreset?: SizePreset;
+  kdpPaperback?: boolean;
+  kdpTrimPreset?: KdpTrimPreset;
+  kdpPaperType?: KdpPaperType;
   showPageNumbers?: boolean;
   upscale?: boolean;
   referenceMappingMode?: QuickCreateReferenceMappingMode;
@@ -262,6 +338,9 @@ interface NormalizedOptions {
   branding: BrandingOption;
   outputStyle: QuickCreateOutputStyle;
   sizePreset: SizePreset;
+  kdpPaperback: boolean;
+  kdpTrimPreset: KdpTrimPreset;
+  kdpPaperType: KdpPaperType;
   showPageNumbers: boolean;
   upscale: boolean;
   referenceMappingMode: QuickCreateReferenceMappingMode;
@@ -494,7 +573,29 @@ export function normalizeQuickCreateOptions(
   const branding: BrandingOption = options.branding || "WishesWithoutBordersCo";
   const outputStyle: QuickCreateOutputStyle =
     options.outputStyle || "full-color";
-  const sizePreset: SizePreset = options.sizePreset || "8.5x11-portrait";
+  const kdpPaperback = options.kdpPaperback === true;
+  if (options.kdpPaperback !== undefined && typeof options.kdpPaperback !== "boolean") {
+    throw new Error("KDP paperback mode must be a boolean");
+  }
+  const kdpTrimPreset = options.kdpTrimPreset ?? "8.5x6-landscape";
+  const kdpPaperType = options.kdpPaperType ?? "premium-color";
+  if (kdpPaperback) {
+    if (!Number.isInteger(pageCount) || pageCount < 24 || pageCount > 28 || pageCount % 2 !== 0) {
+      throw new Error("KDP paperback mode needs 24, 26, or 28 interior pages");
+    }
+    if (!isKdpTrimPreset(kdpTrimPreset)) {
+      throw new Error("KDP paperback trim size is invalid");
+    }
+    if (!isKdpPaperType(kdpPaperType)) {
+      throw new Error("KDP paperback paper type is invalid");
+    }
+  }
+  const sizePreset: SizePreset = kdpPaperback
+    ? KDP_SIZE_PRESETS[kdpTrimPreset]
+    : options.sizePreset || "8.5x11-portrait";
+  if (!kdpPaperback && !Object.hasOwn(SIZE_PRESETS, sizePreset)) {
+    throw new Error("Page size preset is invalid");
+  }
   const showPageNumbers = options.showPageNumbers !== false;
   const upscale = options.upscale === true;
   const referenceMappingMode = options.referenceMappingMode ?? "guidance";
@@ -503,6 +604,9 @@ export function normalizeQuickCreateOptions(
     referenceMappingMode !== "process-steps"
   ) {
     throw new Error("Reference mapping mode is invalid");
+  }
+  if (kdpPaperback && referenceMappingMode === "process-steps") {
+    throw new Error("KDP paperback mode cannot be combined with one-page process-step mode");
   }
   const referenceImages = normalizeReferenceImages(options.referenceImages);
   const expectedReferenceImageCount =
@@ -535,6 +639,12 @@ export function normalizeQuickCreateOptions(
     outputStyle === "full-color" &&
     referenceImages.length === 1 &&
     isGenericReferenceEnhancementPrompt(basePrompt);
+  if (kdpPaperback && outputStyle === "reference-coloring") {
+    throw new Error("KDP paperback mode cannot be combined with photo-to-coloring mode");
+  }
+  if (kdpPaperback && referenceEnhancement) {
+    throw new Error("KDP paperback mode cannot be combined with one-image enhancement mode");
+  }
   const prompt = referenceEnhancement
     ? buildReferenceEnhancementPrompt(basePrompt)
     : basePrompt;
@@ -557,6 +667,9 @@ export function normalizeQuickCreateOptions(
     branding,
     outputStyle,
     sizePreset,
+    kdpPaperback,
+    kdpTrimPreset,
+    kdpPaperType,
     showPageNumbers,
     upscale,
     referenceMappingMode,
@@ -590,12 +703,25 @@ export function buildColoringPagePrompt(options: {
   pageIndex: number;
   totalPages: number;
   preserveReference: boolean;
+  kdpPaperback?: boolean;
 }): string {
   const pageDescription = options.preserveReference
     ? `Convert the attached source image itself into a printable black-and-white coloring page; treat it as the artwork to transform, not as inspiration for a new scene. Preserve the same subject identity, facial features, expression, pose, proportions, framing and crop, silhouette, and placement of its distinctive accessories, patterns, and background elements. Redraw the existing content as clean, crisp, closed black outlines on pure white, leaving the interior regions open for coloring. Do not add, remove, rearrange, or invent subjects or objects. Do not add titles, captions, or other text. The user's additional instructions are: "${options.prompt}". Apply them as conversion and print instructions without changing the source composition.`
     : `Create a new black-and-white line-art coloring page based exactly on this request: "${options.prompt}". Infer the intended subject and level of detail from the user's words, but do not add unrelated content.`;
 
-  return `${pageDescription} Use clean, consistently weighted outlines and generous white fillable areas. No color, gray tones, gradients, shadows, cross-hatching, stippling, background textures, or large solid-black shading; use solid black only for small essential details. Compose for a ${options.sizeLabel} page. This is page ${options.pageIndex + 1} of ${options.totalPages}.`;
+  const safeMarginInstruction = options.kdpPaperback
+    ? " Keep all instructions and important artwork at least 0.375 inches inside the trim edges."
+    : "";
+  return `${pageDescription} Use clean, consistently weighted outlines and generous white fillable areas. No color, gray tones, gradients, shadows, cross-hatching, stippling, background textures, or large solid-black shading; use solid black only for small essential details. Compose for a ${options.sizeLabel} page.${safeMarginInstruction} This is page ${options.pageIndex + 1} of ${options.totalPages}.`;
+}
+
+export function getImageGenerationSize(
+  dimensions: Pick<SizeDimensions, "width" | "height">
+): ImageGenerationSize {
+  const aspectRatio = dimensions.width / dimensions.height;
+  if (aspectRatio > 1.15) return "1536x1024";
+  if (aspectRatio < 0.85) return "1024x1536";
+  return "1024x1024";
 }
 
 function wait(milliseconds: number): Promise<void> {
@@ -687,33 +813,48 @@ async function generatePageComposition(
   totalPages: number
 ): Promise<PageComposition> {
   const dims = getSizeDimensions(options.sizePreset);
+  const isKdpCover = options.kdpPaperback && pageIndex === 0;
+  const kdpPageType = options.kdpPaperback
+    ? isKdpCover
+      ? "cover"
+      : "interior"
+    : undefined;
+  const contentPageIndex = options.kdpPaperback ? Math.max(0, pageIndex - 1) : pageIndex;
+  const contentPageCount = options.kdpPaperback ? options.pageCount : totalPages;
 
-  if (options.referenceEnhancement) {
+  if (options.referenceEnhancement && !options.kdpPaperback) {
     return {
       pageType: "text-heavy",
       imagePrompt: options.prompt,
     };
   }
 
-  if (isColoringOutputStyle(options.outputStyle)) {
+  if (isColoringOutputStyle(options.outputStyle) && !isKdpCover) {
     return {
       pageType: "coloring-page",
       imagePrompt: buildColoringPagePrompt({
         prompt: options.prompt,
         sizeLabel: dims.label,
-        pageIndex,
-        totalPages,
+        pageIndex: contentPageIndex,
+        totalPages: contentPageCount,
         preserveReference: options.outputStyle === "reference-coloring",
+        kdpPaperback: options.kdpPaperback,
       }),
     };
   }
 
-  const systemPrompt = getScriptoriumSystemPrompt(options.branding);
+  const systemPrompt = getScriptoriumSystemPrompt(
+    options.branding,
+    dims.label,
+    kdpPageType
+  );
   const userPrompt = buildScriptoriumUserPrompt({
     prompt: options.prompt,
-    pageIndex,
-    totalPages,
+    pageIndex: contentPageIndex,
+    totalPages: contentPageCount,
     branding: options.branding,
+    sizeLabel: dims.label,
+    kdpPageType,
     referenceMappingMode: options.referenceMappingMode,
     referenceImages: options.referenceImages,
   });
@@ -769,13 +910,24 @@ function buildFallbackComposition(
   pageIndex: number,
   totalPages: number
 ): PageComposition {
+  const dims = getSizeDimensions(options.sizePreset);
+  const isKdpCover = options.kdpPaperback && pageIndex === 0;
+  const kdpPageType = options.kdpPaperback
+    ? isKdpCover
+      ? "cover"
+      : "interior"
+    : undefined;
+  const contentPageIndex = options.kdpPaperback ? Math.max(0, pageIndex - 1) : pageIndex;
+  const contentPageCount = options.kdpPaperback ? options.pageCount : totalPages;
   return {
     pageType: "text-heavy",
     imagePrompt: buildScriptoriumFallbackPrompt({
       prompt: options.prompt,
-      pageIndex,
-      totalPages,
+      pageIndex: contentPageIndex,
+      totalPages: contentPageCount,
       branding: options.branding,
+      sizeLabel: dims.label,
+      kdpPageType,
       referenceMappingMode: options.referenceMappingMode,
       referenceImages: options.referenceImages,
     }),
@@ -788,7 +940,7 @@ export function buildScriptoriumImageEditFormData(
   prompt: string,
   referenceImages: QuickCreateReferenceImage[],
   model: string,
-  size: "1024x1536" | "auto" = "1024x1536",
+  size: ImageGenerationSize = "1024x1536",
   referenceMappingMode: QuickCreateReferenceMappingMode = "guidance"
 ): FormData {
   if (referenceImages.length === 0) {
@@ -839,7 +991,8 @@ export async function generateCompositionImage(
   referenceImages: QuickCreateReferenceImage[] = [],
   expectedReferenceImageCount = referenceImages.length,
   preserveReferenceComposition = false,
-  referenceMappingMode: QuickCreateReferenceMappingMode = "guidance"
+  referenceMappingMode: QuickCreateReferenceMappingMode = "guidance",
+  imageSize: ImageGenerationSize = "1024x1536"
 ): Promise<Buffer> {
   assertReferenceImageCount(referenceImages, expectedReferenceImageCount);
   let lastError: unknown;
@@ -853,7 +1006,7 @@ export async function generateCompositionImage(
             prompt,
             referenceImages,
             model,
-            preserveReferenceComposition ? "auto" : "1024x1536",
+            preserveReferenceComposition ? "auto" : imageSize,
             referenceMappingMode
           );
           if (
@@ -896,7 +1049,7 @@ export async function generateCompositionImage(
                 prompt,
                 n: 1,
                 quality: "high",
-                size: "1024x1536",
+                size: imageSize,
               }),
             }
           );
@@ -1021,7 +1174,8 @@ async function generateColoringPage(
   referenceImages: QuickCreateReferenceImage[] = [],
   preserveSource = false,
   expectedReferenceImageCount = referenceImages.length,
-  referenceMappingMode: QuickCreateReferenceMappingMode = "guidance"
+  referenceMappingMode: QuickCreateReferenceMappingMode = "guidance",
+  imageSize: ImageGenerationSize = "1024x1536"
 ): Promise<Buffer> {
   const coloringPrompt = `${imagePrompt}. Style requirements: pure black-and-white line art coloring page, thick clean outlines only, no shading, no gray tones, no color fills, no background textures, high-contrast black lines on a pure white background, exceptionally crisp vector-like edges, sharply defined subjects, premium professional coloring-book quality suitable for high-resolution printing. Negative requirements: ${COLORING_NEGATIVE_PROMPT}.`;
 
@@ -1030,7 +1184,8 @@ async function generateColoringPage(
     referenceImages,
     expectedReferenceImageCount,
     false,
-    referenceMappingMode
+    referenceMappingMode,
+    imageSize
   );
 
   // Post-process to ensure clean B&W output
@@ -1051,14 +1206,7 @@ async function generateColoringPage(
     );
   }
 
-  return sharp(cleaned)
-    .resize(dims.width, dims.height, {
-      fit: "fill",
-      background: "#ffffff",
-      kernel: sharp.kernel.lanczos3,
-    })
-    .png({ compressionLevel: 9 })
-    .toBuffer();
+  return resizeReferenceWithBlurredBackground(cleaned, dims.width, dims.height);
 }
 
 async function generateTextHeavyPage(
@@ -1067,14 +1215,16 @@ async function generateTextHeavyPage(
   referenceImages: QuickCreateReferenceImage[] = [],
   expectedReferenceImageCount = referenceImages.length,
   preserveReferenceComposition = false,
-  referenceMappingMode: QuickCreateReferenceMappingMode = "guidance"
+  referenceMappingMode: QuickCreateReferenceMappingMode = "guidance",
+  imageSize: ImageGenerationSize = "1024x1536"
 ): Promise<Buffer> {
   const rawBuffer = await generateCompositionImage(
     imagePrompt,
     referenceImages,
     expectedReferenceImageCount,
     preserveReferenceComposition,
-    referenceMappingMode
+    referenceMappingMode,
+    imageSize
   );
 
   if (preserveReferenceComposition) {
@@ -1087,14 +1237,7 @@ async function generateTextHeavyPage(
     );
   }
 
-  return sharp(rawBuffer)
-    .resize(dims.width, dims.height, {
-      fit: "fill",
-      background: "#ffffff",
-      kernel: sharp.kernel.lanczos3,
-    })
-    .png({ compressionLevel: 9 })
-    .toBuffer();
+  return resizeReferenceWithBlurredBackground(rawBuffer, dims.width, dims.height);
 }
 
 // ─── Page Generation ─────────────────────────────────────────────────────────
@@ -1111,6 +1254,7 @@ async function generateQuickCreatePage(
   );
   const pageNumber = pageIndex + 1;
   const dims = getSizeDimensions(options.sizePreset);
+  const imageSize = getImageGenerationSize(dims);
 
   const composition = await generatePageComposition(
     options,
@@ -1126,7 +1270,8 @@ async function generateQuickCreatePage(
           referenceImages,
           options.outputStyle === "reference-coloring",
           options.expectedReferenceImageCount,
-          options.referenceMappingMode
+          options.referenceMappingMode,
+          imageSize
         )
       : await generateTextHeavyPage(
           composition.imagePrompt,
@@ -1134,7 +1279,8 @@ async function generateQuickCreatePage(
           referenceImages,
           options.expectedReferenceImageCount,
           options.referenceEnhancement,
-          options.referenceMappingMode
+          options.referenceMappingMode,
+          imageSize
         );
 
   // Optional 4× upscale via Replicate Real-ESRGAN
@@ -1153,6 +1299,14 @@ async function generateQuickCreatePage(
         upscaleError
       );
     }
+  }
+
+  if (options.kdpPaperback && pageIndex > 0) {
+    finalBuffer = await addKdpInteriorBleed(
+      finalBuffer,
+      options.kdpTrimPreset,
+      pageIndex
+    );
   }
 
   const { url: imageUrl } = await storagePut(
@@ -1183,6 +1337,9 @@ async function saveJobMetadata(
       outputStyle: opts.outputStyle,
       pageCount: opts.pageCount,
       sizePreset: opts.sizePreset,
+      kdpPaperback: opts.kdpPaperback,
+      kdpTrimPreset: opts.kdpPaperback ? opts.kdpTrimPreset : undefined,
+      kdpPaperType: opts.kdpPaperback ? opts.kdpPaperType : undefined,
       showPageNumbers: opts.showPageNumbers,
       upscale: opts.upscale,
       timestamp: new Date().toISOString(),
@@ -1240,10 +1397,74 @@ async function processQuickCreateChunkInternal(
     const opts = updatedJob.options as unknown as NormalizedOptions;
     try {
       await saveJobMetadata(updatedJob, opts, updatedJob.filename);
-      await finalizePdf(updatedJob, {
-        addPdfBranding: opts.branding !== "none",
-        showPageNumbers: opts.showPageNumbers,
-      });
+      if (opts.kdpPaperback) {
+        let coverExportFailed = false;
+        const frontCoverPage = updatedJob.pageResults.find(
+          page => page.pageNumber === 1 && page.status === "success"
+        );
+        if (frontCoverPage) {
+          try {
+            updateJob(job.id, { statusMessage: "Preparing KDP paperback wrap cover..." });
+            const frontImage = await fetchImageBuffer(frontCoverPage.imageUrl, {
+              maxDimension: 0,
+              jpegQuality: 95,
+            });
+            const coverPdfBuffer = await createKdpPaperbackCoverPdf(
+              frontImage,
+              opts.kdpTrimPreset,
+              opts.pageCount,
+              opts.kdpPaperType
+            );
+            const coverFilename = updatedJob.filename.replace(/\.pdf$/i, "-kdp-cover.pdf");
+            const { url: kdpCoverPdfUrl } = await storagePut(
+              `products/quick-create/${coverFilename}`,
+              coverPdfBuffer,
+              "application/pdf"
+            );
+            updateJob(job.id, { kdpCoverPdfUrl });
+          } catch (error) {
+            coverExportFailed = true;
+            console.error("KDP cover PDF export failed:", error);
+          }
+        } else {
+          coverExportFailed = true;
+        }
+
+        const interiorGeometry = getKdpInteriorBleedGeometry(opts.kdpTrimPreset);
+        await finalizePdf(updatedJob, {
+          addPdfBranding: false,
+          showPageNumbers: false,
+          excludeFirstPage: true,
+          pageSizePoints: {
+            width: interiorGeometry.widthPoints,
+            height: interiorGeometry.heightPoints,
+          },
+          preserveImageDimensions: true,
+          jpegQuality: 92,
+        });
+
+        const finalizedJob = getJob(job.id);
+        if (
+          finalizedJob?.pdfUrl &&
+          (coverExportFailed || !finalizedJob.kdpCoverPdfUrl)
+        ) {
+          updateJob(job.id, {
+            status: "partial",
+            statusMessage: "Interior PDF ready; the separate KDP cover PDF could not be created.",
+            errorMessage: "Download the interior PDF, then retry the cover export after checking the first generated cover page.",
+          });
+        }
+      } else {
+        const dims = getSizeDimensions(opts.sizePreset);
+        await finalizePdf(updatedJob, {
+          addPdfBranding: opts.branding !== "none",
+          showPageNumbers: opts.showPageNumbers,
+          pageSizePoints: {
+            width: (dims.width / 300) * 72,
+            height: (dims.height / 300) * 72,
+          },
+        });
+      }
     } finally {
       // Reference photos are held only while the job is generating.
       delete opts.referenceImages;
@@ -1255,7 +1476,7 @@ export function createQuickCreateJob(options: QuickCreateOptions): string {
   const normalizedOptions = normalizeQuickCreateOptions(options);
   const job = createJob(
     "quick-create",
-    normalizedOptions.pageCount,
+    normalizedOptions.pageCount + (normalizedOptions.kdpPaperback ? 1 : 0),
     normalizedOptions,
     `quick-create-${Date.now()}.pdf`
   );

@@ -23,6 +23,7 @@ export interface GenerationJob {
   completedPages: number;
   pageResults: PageResult[];
   pdfUrl: string | null;
+  kdpCoverPdfUrl: string | null;
   coverImageUrl: string | null;
   filename: string;
   statusMessage: string;
@@ -61,6 +62,7 @@ export function createJob(
     completedPages: 0,
     pageResults: [],
     pdfUrl: null,
+    kdpCoverPdfUrl: null,
     coverImageUrl: null,
     filename,
     statusMessage: "Starting generation...",
@@ -101,6 +103,7 @@ export function getJobPublicState(job: GenerationJob) {
     completedPages: job.completedPages,
     pageResults: job.pageResults,
     pdfUrl: job.pdfUrl,
+    kdpCoverPdfUrl: job.kdpCoverPdfUrl,
     coverImageUrl: job.coverImageUrl,
     filename: job.filename,
     statusMessage: job.statusMessage,

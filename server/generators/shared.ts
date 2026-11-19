@@ -665,6 +665,10 @@ export async function finalizePdf(
     addPdfBranding?: boolean;
     brandingText?: "WishesWithoutBordersCo" | "LaneDigitalWorks" | "off" | string;
     showPageNumbers?: boolean;
+    excludeFirstPage?: boolean;
+    pageSizePoints?: { width: number; height: number };
+    preserveImageDimensions?: boolean;
+    jpegQuality?: number;
   } = {}
 ): Promise<void> {
   updateJob(job.id, { statusMessage: "Assembling PDF..." });
@@ -679,13 +683,27 @@ export async function finalizePdf(
     return;
   }
 
+  const pdfPages = options.excludeFirstPage
+    ? successPages.filter(page => page.pageNumber !== 1)
+    : successPages;
+  if (pdfPages.length === 0) {
+    updateJob(job.id, {
+      status: "error",
+      errorMessage: "No interior pages were generated successfully.",
+    });
+    return;
+  }
+
   try {
     // Each generated image is already the complete printable page. Pass only
     // the compressed image buffer so PDFKit cannot add text, page numbers, or
     // branding overlays after generation.
     const pageContents: PageContent[] = [];
-    for (const page of successPages) {
-      const buffer = await fetchImageBuffer(page.imageUrl);
+    for (const page of pdfPages) {
+      const buffer = await fetchImageBuffer(page.imageUrl, {
+        maxDimension: options.preserveImageDimensions ? 0 : 2048,
+        jpegQuality: options.jpegQuality ?? 80,
+      });
       pageContents.push({
         imageBuffer: buffer,
         addBranding: options.addPdfBranding !== false,
@@ -695,7 +713,8 @@ export async function finalizePdf(
     const pdfBuffer = await assemblePdf(
       pageContents,
       options.brandingText,
-      options.showPageNumbers !== false
+      options.showPageNumbers !== false,
+      options.pageSizePoints
     );
     console.log(`PDF assembled: ${(pdfBuffer.length / 1024 / 1024).toFixed(2)} MB for ${successPages.length} pages`);
 
@@ -707,7 +726,11 @@ export async function finalizePdf(
     );
 
     // Set cover image from first successful page
-    const coverUrl = successPages[0]?.imageUrl || null;
+    const coverUrl = options.excludeFirstPage
+      ? job.pageResults.find(
+          page => page.pageNumber === 1 && page.status === "success"
+        )?.imageUrl || null
+      : successPages[0]?.imageUrl || null;
 
     updateJob(job.id, {
       status: successPages.length === job.totalPages ? "complete" : "partial",

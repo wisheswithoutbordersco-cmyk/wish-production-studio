@@ -106,7 +106,7 @@ export function GenerationProgress({ jobState, isGenerating, progress, onCancel,
                 <img
                   src={page.imageUrl}
                   alt={`Page ${page.pageNumber}`}
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-contain"
                 />
               </div>
             ))}
@@ -119,9 +119,20 @@ export function GenerationProgress({ jobState, isGenerating, progress, onCancel,
           <Button asChild className="flex-1">
             <a href={jobState.pdfUrl} download={jobState.filename}>
               <Download className="h-4 w-4 mr-2" />
-              Download PDF
+              {jobState.kdpCoverPdfUrl ? "Download Interior PDF" : "Download PDF"}
             </a>
           </Button>
+          {jobState.kdpCoverPdfUrl && (
+            <Button variant="outline" asChild className="flex-1">
+              <a
+                href={jobState.kdpCoverPdfUrl}
+                download={jobState.filename.replace(/\.pdf$/i, "-kdp-cover.pdf")}
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Download KDP Cover PDF
+              </a>
+            </Button>
+          )}
           <Button variant="outline" asChild>
             <a href={jobState.pdfUrl} target="_blank" rel="noopener noreferrer">
               <FileText className="h-4 w-4 mr-2" />

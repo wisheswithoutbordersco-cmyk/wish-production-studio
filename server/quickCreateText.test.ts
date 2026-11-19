@@ -11,8 +11,10 @@ import {
   buildScriptoriumFallbackPrompt,
   buildScriptoriumImageEditFormData,
   buildScriptoriumImageRequest,
+  buildScriptoriumUserPrompt,
   buildReferenceImageInstructions,
   generateCompositionImage,
+  getImageGenerationSize,
   getScriptoriumSystemPrompt,
   isColoringOutputStyle,
   isGenericReferenceEnhancementPrompt,
@@ -81,7 +83,7 @@ describe("Scriptorium Quick Create", () => {
       "Do not add, remove, replace, rearrange"
     );
     expect(source).toMatch(
-      /if \(options\.referenceEnhancement\) \{\s*return \{\s*pageType: "text-heavy",\s*imagePrompt: options\.prompt/s
+      /if \(options\.referenceEnhancement && !options\.kdpPaperback\) \{\s*return \{\s*pageType: "text-heavy",\s*imagePrompt: options\.prompt/s
     );
 
     const specific = normalizeQuickCreateOptions({
@@ -241,7 +243,7 @@ describe("Scriptorium Quick Create", () => {
 
   it("uses the GPT image pipeline for coloring output, with or without a reference", () => {
     expect(source).toMatch(
-      /const rawBuffer = await generateCompositionImage\(\s*coloringPrompt,\s*referenceImages,\s*expectedReferenceImageCount,\s*false,\s*referenceMappingMode\s*\);/
+      /const rawBuffer = await generateCompositionImage\(\s*coloringPrompt,\s*referenceImages,\s*expectedReferenceImageCount,\s*false,\s*referenceMappingMode,\s*imageSize\s*\);/
     );
     expect(source).not.toContain("fal.ai coloring-page generation failed");
     expect(source).toContain("COLORING_LINE_THRESHOLD = 180");
@@ -256,6 +258,14 @@ describe("Scriptorium Quick Create", () => {
     expect(request.model).toBe("gpt-image-2.6-sunburst");
     expect(request.quality).toBe("high");
     expect(request.background).toBe("opaque");
+
+    const landscapeRequest = buildScriptoriumImageRequest(
+      "A landscape picture-book page",
+      "1536x1024",
+      "8.5×6 landscape"
+    );
+    expect(landscapeRequest.size).toBe("1536x1024");
+    expect(landscapeRequest.prompt).toContain("8.5×6 landscape");
   });
 
   it("keeps GPT Image 2 as a one-step reliability fallback", () => {
@@ -329,6 +339,63 @@ describe("Scriptorium Quick Create", () => {
     expect(getScriptoriumSystemPrompt("LaneDigitalWorks")).toContain(
       'Footer branding with the exact text "LaneDigitalWorks"'
     );
+  });
+
+  it("validates KDP paperback trim and even interior page counts", () => {
+    const normalized = normalizeQuickCreateOptions({
+      customPrompt: "A colorful storybook cover and matching interior",
+      pageCount: 24,
+      kdpPaperback: true,
+      kdpTrimPreset: "8.5x6-landscape",
+      kdpPaperType: "premium-color",
+    });
+    expect(normalized.kdpPaperback).toBe(true);
+    expect(normalized.pageCount).toBe(24);
+    expect(normalized.sizePreset).toBe("kdp-8.5x6-landscape");
+    expect(normalized.kdpTrimPreset).toBe("8.5x6-landscape");
+    expect(normalized.kdpPaperType).toBe("premium-color");
+
+    for (const invalidCount of [23, 25, 30]) {
+      expect(() =>
+        normalizeQuickCreateOptions({
+          customPrompt: "A paperback book",
+          pageCount: invalidCount,
+          kdpPaperback: true,
+        })
+      ).toThrow("KDP paperback mode needs 24, 26, or 28 interior pages");
+    }
+  });
+
+  it("uses landscape image generation and KDP-specific safe-area prompts", () => {
+    expect(getImageGenerationSize({ width: 2550, height: 1800 })).toBe(
+      "1536x1024"
+    );
+    expect(getImageGenerationSize({ width: 1800, height: 2700 })).toBe(
+      "1024x1536"
+    );
+
+    const coverPrompt = buildScriptoriumUserPrompt({
+      prompt: "A colorful ocean picture-book cover",
+      pageIndex: 0,
+      totalPages: 25,
+      branding: "none",
+      sizeLabel: "8.5×6 landscape",
+      kdpPageType: "cover",
+    });
+    expect(coverPrompt).toContain("Separate front-cover panel");
+    expect(coverPrompt).toContain("not create a wraparound cover");
+    expect(coverPrompt).toContain("0.375 inches inside");
+
+    const interiorPrompt = buildScriptoriumFallbackPrompt({
+      prompt: "A colorful ocean story page",
+      pageIndex: 0,
+      totalPages: 24,
+      branding: "none",
+      sizeLabel: "8.5×6 landscape",
+      kdpPageType: "interior",
+    });
+    expect(interiorPrompt).toContain("8.5×6 landscape composition");
+    expect(interiorPrompt).toContain("at least 0.375 inches inside trim edges");
   });
 });
 
