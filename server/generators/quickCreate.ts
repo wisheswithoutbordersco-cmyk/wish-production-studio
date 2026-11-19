@@ -10,18 +10,14 @@ import {
   type GenerationJob,
   type PageResult,
 } from "../jobs";
-import { fetchImageBuffer } from "../pdfAssembly";
 import { storagePut } from "../storage";
 import { finalizePdf } from "./shared";
 import {
   addKdpInteriorBleed,
-  createKdpPaperbackCoverPdf,
   getKdpInteriorBleedGeometry,
-  isKdpPaperType,
+  isKdpPageSide,
   isKdpTrimPreset,
-  KDP_PAPER_TYPES,
-  KDP_TRIM_SIZES,
-  type KdpPaperType,
+  type KdpPageSide,
   type KdpTrimPreset,
 } from "./kdp";
 
@@ -93,7 +89,7 @@ export interface ScriptoriumPageContext {
   totalPages: number;
   branding: BrandingOption;
   sizeLabel?: string;
-  kdpPageType?: "cover" | "interior";
+  kdpPageType?: "interior";
   referenceMappingMode?: QuickCreateReferenceMappingMode;
   referenceImages?: QuickCreateReferenceImage[];
 }
@@ -116,7 +112,7 @@ export const SCRIPTORIUM_RENDER_QUALITY =
 export function getScriptoriumSystemPrompt(
   branding: BrandingOption,
   sizeLabel = "8.5×11 portrait",
-  kdpPageType?: "cover" | "interior"
+  kdpPageType?: "interior"
 ): string {
   let brandingLine1: string;
   let brandingLine2: string;
@@ -130,9 +126,7 @@ export function getScriptoriumSystemPrompt(
     brandingLine2 = `\n- Always include "${branding}" as small, legible footer branding text`;
   }
 
-  if (kdpPageType === "cover") {
-    pageLayoutInstruction = `Create one finished front-cover panel at the selected ${sizeLabel} trim ratio. Do not depict a wraparound cover, back, spine, barcode, book mockup, or surrounding scene. Keep the title, author text, faces, and other essential details at least 0.375 inches inside every trim edge.`;
-  } else if (kdpPageType === "interior") {
+  if (kdpPageType === "interior") {
     pageLayoutInstruction = `Create one complete interior page at the selected ${sizeLabel} trim size. Keep all text and important details at least 0.375 inches inside every trim edge; artwork may continue to the page edge and into bleed.`;
   } else {
     pageLayoutInstruction = `Describe ONE complete, flat, full-page image at ${sizeLabel}`;
@@ -212,14 +206,10 @@ export function buildScriptoriumUserPrompt({
     referenceMappingMode,
     referenceImages
   );
-  const kdpPageInstructions = kdpPageType === "cover"
-    ? `\n\nKDP FRONT COVER: Create a single front-cover panel for a paperback, at ${sizeLabel}. Keep important cover elements at least 0.375 inches inside the trim edges. Do not create a wraparound cover or include the back, spine, barcode, or mockup.`
-    : kdpPageType === "interior"
-      ? `\n\nKDP INTERIOR: This page is ${sizeLabel}. Keep important text and details at least 0.375 inches inside trim edges; artwork can continue into bleed.`
-      : "";
-  const pageDescription = kdpPageType === "cover"
-    ? "Separate front-cover panel"
-    : `Page ${pageIndex + 1} of ${totalPages}`;
+  const kdpPageInstructions = kdpPageType === "interior"
+    ? `\n\nKDP INTERIOR: This page is ${sizeLabel}. Keep important text and details at least 0.375 inches inside trim edges; artwork can continue into bleed.`
+    : "";
+  const pageDescription = `Page ${pageIndex + 1} of ${totalPages}`;
   return `USER REQUEST:
 ${prompt}${processStepInstructions}${kdpPageInstructions}
 
@@ -252,11 +242,9 @@ export function buildScriptoriumFallbackPrompt({
   }
 
   const fallback = `Create ONE complete, flat, full-page professional publication page based exactly on this request: "${prompt}". Infer the product type, audience, complexity, tone, and purpose solely from the user\'s words. This is page ${pageIndex + 1} of ${totalPages}. Preserve the requested product type and use the structure, content, fields, copy, and page conventions that genuinely belong to it. Do not turn the request into a school worksheet, quiz, lesson, math exercise, or answer-blank activity unless the user explicitly requested that format. Use an 8.5x11-inch portrait composition filling the entire canvas edge-to-edge, never a photographed paper, mockup, frame, or page on a background. Render all necessary page text directly in the image with correct spelling and a polished font hierarchy. For a full-color page, use bold saturated vivid colors, high contrast, a rich vibrant palette, and intense clean color separation. Avoid beige, cream, muted earth tones, dusty colors, desaturated or washed-out color, and soft pastel palettes unless the user explicitly requested them. Use crisp typography, clean edges, sharply defined illustrations or characters when appropriate, balanced spacing, and refined subject-relevant visual details. Make the result look like a premium, vibrant, professionally published, print-ready product.${brandingSuffix}`;
-  const pageRoleInstruction = kdpPageType === "cover"
-    ? "Create a separate paperback front-cover panel; do not depict the back, spine, barcode, or a mockup. Keep essential cover text and details at least 0.375 inches inside trim edges."
-    : kdpPageType === "interior"
-      ? "This is a KDP paperback interior page; keep important text and details at least 0.375 inches inside trim edges."
-      : `This is page ${pageIndex + 1} of ${totalPages}.`;
+  const pageRoleInstruction = kdpPageType === "interior"
+    ? "This is a KDP paperback interior page; keep important text and details at least 0.375 inches inside trim edges."
+    : `This is page ${pageIndex + 1} of ${totalPages}.`;
   return fallback
     .replace("Use an 8.5x11-inch portrait composition", `Use a ${sizeLabel} composition`)
     .replace(`This is page ${pageIndex + 1} of ${totalPages}.`, pageRoleInstruction);
@@ -309,7 +297,7 @@ export interface QuickCreateOptions {
   sizePreset?: SizePreset;
   kdpPaperback?: boolean;
   kdpTrimPreset?: KdpTrimPreset;
-  kdpPaperType?: KdpPaperType;
+  kdpPageSide?: KdpPageSide;
   showPageNumbers?: boolean;
   upscale?: boolean;
   referenceMappingMode?: QuickCreateReferenceMappingMode;
@@ -340,7 +328,7 @@ interface NormalizedOptions {
   sizePreset: SizePreset;
   kdpPaperback: boolean;
   kdpTrimPreset: KdpTrimPreset;
-  kdpPaperType: KdpPaperType;
+  kdpPageSide: KdpPageSide;
   showPageNumbers: boolean;
   upscale: boolean;
   referenceMappingMode: QuickCreateReferenceMappingMode;
@@ -575,26 +563,16 @@ export function normalizeQuickCreateOptions(
     options.outputStyle || "full-color";
   const kdpPaperback = options.kdpPaperback === true;
   if (options.kdpPaperback !== undefined && typeof options.kdpPaperback !== "boolean") {
-    throw new Error("KDP paperback mode must be a boolean");
+    throw new Error("KDP page-image mode must be a boolean");
   }
   const kdpTrimPreset = options.kdpTrimPreset ?? "8.5x6-landscape";
-  const kdpPaperType = options.kdpPaperType ?? "premium-color";
+  const kdpPageSide = options.kdpPageSide ?? "right";
   if (kdpPaperback) {
-    if (
-      !Number.isInteger(pageCount) ||
-      pageCount < 24 ||
-      pageCount > MAX_PAGE_COUNT ||
-      pageCount % 2 !== 0
-    ) {
-      throw new Error(
-        `KDP paperback mode needs an even interior page count between 24 and ${MAX_PAGE_COUNT}`
-      );
-    }
     if (!isKdpTrimPreset(kdpTrimPreset)) {
-      throw new Error("KDP paperback trim size is invalid");
+      throw new Error("KDP trim size is invalid");
     }
-    if (!isKdpPaperType(kdpPaperType)) {
-      throw new Error("KDP paperback paper type is invalid");
+    if (!isKdpPageSide(kdpPageSide)) {
+      throw new Error("KDP page side is invalid");
     }
   }
   const sizePreset: SizePreset = kdpPaperback
@@ -611,9 +589,6 @@ export function normalizeQuickCreateOptions(
     referenceMappingMode !== "process-steps"
   ) {
     throw new Error("Reference mapping mode is invalid");
-  }
-  if (kdpPaperback && referenceMappingMode === "process-steps") {
-    throw new Error("KDP paperback mode cannot be combined with one-page process-step mode");
   }
   const referenceImages = normalizeReferenceImages(options.referenceImages);
   const expectedReferenceImageCount =
@@ -646,12 +621,6 @@ export function normalizeQuickCreateOptions(
     outputStyle === "full-color" &&
     referenceImages.length === 1 &&
     isGenericReferenceEnhancementPrompt(basePrompt);
-  if (kdpPaperback && outputStyle === "reference-coloring") {
-    throw new Error("KDP paperback mode cannot be combined with photo-to-coloring mode");
-  }
-  if (kdpPaperback && referenceEnhancement) {
-    throw new Error("KDP paperback mode cannot be combined with one-image enhancement mode");
-  }
   const prompt = referenceEnhancement
     ? buildReferenceEnhancementPrompt(basePrompt)
     : basePrompt;
@@ -663,6 +632,7 @@ export function normalizeQuickCreateOptions(
         }))
       : referenceImages;
   const normalizedPageCount =
+    kdpPaperback ||
     referenceMappingMode === "process-steps" ||
     outputStyle === "reference-coloring"
       ? 1
@@ -676,7 +646,7 @@ export function normalizeQuickCreateOptions(
     sizePreset,
     kdpPaperback,
     kdpTrimPreset,
-    kdpPaperType,
+    kdpPageSide,
     showPageNumbers,
     upscale,
     referenceMappingMode,
@@ -820,23 +790,18 @@ async function generatePageComposition(
   totalPages: number
 ): Promise<PageComposition> {
   const dims = getSizeDimensions(options.sizePreset);
-  const isKdpCover = options.kdpPaperback && pageIndex === 0;
-  const kdpPageType = options.kdpPaperback
-    ? isKdpCover
-      ? "cover"
-      : "interior"
-    : undefined;
-  const contentPageIndex = options.kdpPaperback ? Math.max(0, pageIndex - 1) : pageIndex;
-  const contentPageCount = options.kdpPaperback ? options.pageCount : totalPages;
+  const kdpPageType = options.kdpPaperback ? "interior" : undefined;
+  const contentPageIndex = pageIndex;
+  const contentPageCount = totalPages;
 
-  if (options.referenceEnhancement && !options.kdpPaperback) {
+  if (options.referenceEnhancement) {
     return {
       pageType: "text-heavy",
       imagePrompt: options.prompt,
     };
   }
 
-  if (isColoringOutputStyle(options.outputStyle) && !isKdpCover) {
+  if (isColoringOutputStyle(options.outputStyle)) {
     return {
       pageType: "coloring-page",
       imagePrompt: buildColoringPagePrompt({
@@ -918,14 +883,9 @@ function buildFallbackComposition(
   totalPages: number
 ): PageComposition {
   const dims = getSizeDimensions(options.sizePreset);
-  const isKdpCover = options.kdpPaperback && pageIndex === 0;
-  const kdpPageType = options.kdpPaperback
-    ? isKdpCover
-      ? "cover"
-      : "interior"
-    : undefined;
-  const contentPageIndex = options.kdpPaperback ? Math.max(0, pageIndex - 1) : pageIndex;
-  const contentPageCount = options.kdpPaperback ? options.pageCount : totalPages;
+  const kdpPageType = options.kdpPaperback ? "interior" : undefined;
+  const contentPageIndex = pageIndex;
+  const contentPageCount = totalPages;
   return {
     pageType: "text-heavy",
     imagePrompt: buildScriptoriumFallbackPrompt({
@@ -1308,11 +1268,11 @@ async function generateQuickCreatePage(
     }
   }
 
-  if (options.kdpPaperback && pageIndex > 0) {
+  if (options.kdpPaperback) {
     finalBuffer = await addKdpInteriorBleed(
       finalBuffer,
       options.kdpTrimPreset,
-      pageIndex
+      options.kdpPageSide
     );
   }
 
@@ -1346,7 +1306,7 @@ async function saveJobMetadata(
       sizePreset: opts.sizePreset,
       kdpPaperback: opts.kdpPaperback,
       kdpTrimPreset: opts.kdpPaperback ? opts.kdpTrimPreset : undefined,
-      kdpPaperType: opts.kdpPaperback ? opts.kdpPaperType : undefined,
+      kdpPageSide: opts.kdpPaperback ? opts.kdpPageSide : undefined,
       showPageNumbers: opts.showPageNumbers,
       upscale: opts.upscale,
       timestamp: new Date().toISOString(),
@@ -1405,43 +1365,10 @@ async function processQuickCreateChunkInternal(
     try {
       await saveJobMetadata(updatedJob, opts, updatedJob.filename);
       if (opts.kdpPaperback) {
-        let coverExportFailed = false;
-        const frontCoverPage = updatedJob.pageResults.find(
-          page => page.pageNumber === 1 && page.status === "success"
-        );
-        if (frontCoverPage) {
-          try {
-            updateJob(job.id, { statusMessage: "Preparing KDP paperback wrap cover..." });
-            const frontImage = await fetchImageBuffer(frontCoverPage.imageUrl, {
-              maxDimension: 0,
-              jpegQuality: 95,
-            });
-            const coverPdfBuffer = await createKdpPaperbackCoverPdf(
-              frontImage,
-              opts.kdpTrimPreset,
-              opts.pageCount,
-              opts.kdpPaperType
-            );
-            const coverFilename = updatedJob.filename.replace(/\.pdf$/i, "-kdp-cover.pdf");
-            const { url: kdpCoverPdfUrl } = await storagePut(
-              `products/quick-create/${coverFilename}`,
-              coverPdfBuffer,
-              "application/pdf"
-            );
-            updateJob(job.id, { kdpCoverPdfUrl });
-          } catch (error) {
-            coverExportFailed = true;
-            console.error("KDP cover PDF export failed:", error);
-          }
-        } else {
-          coverExportFailed = true;
-        }
-
         const interiorGeometry = getKdpInteriorBleedGeometry(opts.kdpTrimPreset);
         await finalizePdf(updatedJob, {
           addPdfBranding: false,
           showPageNumbers: false,
-          excludeFirstPage: true,
           pageSizePoints: {
             width: interiorGeometry.widthPoints,
             height: interiorGeometry.heightPoints,
@@ -1449,18 +1376,6 @@ async function processQuickCreateChunkInternal(
           preserveImageDimensions: true,
           jpegQuality: 92,
         });
-
-        const finalizedJob = getJob(job.id);
-        if (
-          finalizedJob?.pdfUrl &&
-          (coverExportFailed || !finalizedJob.kdpCoverPdfUrl)
-        ) {
-          updateJob(job.id, {
-            status: "partial",
-            statusMessage: "Interior PDF ready; the separate KDP cover PDF could not be created.",
-            errorMessage: "Download the interior PDF, then retry the cover export after checking the first generated cover page.",
-          });
-        }
       } else {
         const dims = getSizeDimensions(opts.sizePreset);
         await finalizePdf(updatedJob, {
@@ -1483,7 +1398,7 @@ export function createQuickCreateJob(options: QuickCreateOptions): string {
   const normalizedOptions = normalizeQuickCreateOptions(options);
   const job = createJob(
     "quick-create",
-    normalizedOptions.pageCount + (normalizedOptions.kdpPaperback ? 1 : 0),
+    normalizedOptions.pageCount,
     normalizedOptions,
     `quick-create-${Date.now()}.pdf`
   );

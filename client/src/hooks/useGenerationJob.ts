@@ -32,7 +32,6 @@ export interface JobState {
   completedPages: number;
   pageResults: PageResult[];
   pdfUrl: string | null;
-  kdpCoverPdfUrl: string | null;
   coverImageUrl: string | null;
   filename: string;
   statusMessage: string;
@@ -107,12 +106,11 @@ export function useGenerationJob(): UseGenerationJobReturn {
         id: jobId,
         status: "pending",
         totalPages: options.kdpPaperback
-          ? (options.pageCount || 1) + 1
+          ? 1
           : options.pageCount || options.quantity || options.cardsPerSet || 1,
         completedPages: 0,
         pageResults: [],
         pdfUrl: null,
-        kdpCoverPdfUrl: null,
         coverImageUrl: null,
         filename: "",
         statusMessage: "Starting generation...",
@@ -130,7 +128,6 @@ export function useGenerationJob(): UseGenerationJobReturn {
         completedPages: 0,
         pageResults: [],
         pdfUrl: null,
-        kdpCoverPdfUrl: null,
         coverImageUrl: null,
         filename: "",
         statusMessage: "",

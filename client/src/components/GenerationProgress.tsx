@@ -14,6 +14,7 @@ interface GenerationProgressProps {
   jobState: JobState | null;
   isGenerating: boolean;
   progress: number;
+  pageAspectRatio?: number;
   onCancel?: () => void;
   productMeta?: {
     title: string;
@@ -25,7 +26,7 @@ interface GenerationProgressProps {
   };
 }
 
-export function GenerationProgress({ jobState, isGenerating, progress, onCancel, productMeta }: GenerationProgressProps) {
+export function GenerationProgress({ jobState, isGenerating, progress, pageAspectRatio, onCancel, productMeta }: GenerationProgressProps) {
   const [saved, setSaved] = useState(false);
   const createProduct = trpc.products.create.useMutation({
     onSuccess: () => {
@@ -101,7 +102,8 @@ export function GenerationProgress({ jobState, isGenerating, progress, onCancel,
             .map((page) => (
               <div
                 key={page.pageNumber}
-                className="aspect-[8.5/11] rounded-md overflow-hidden border border-border bg-secondary"
+                className="rounded-md overflow-hidden border border-border bg-secondary"
+                style={{ aspectRatio: pageAspectRatio ?? 8.5 / 11 }}
               >
                 <img
                   src={page.imageUrl}
@@ -119,20 +121,9 @@ export function GenerationProgress({ jobState, isGenerating, progress, onCancel,
           <Button asChild className="flex-1">
             <a href={jobState.pdfUrl} download={jobState.filename}>
               <Download className="h-4 w-4 mr-2" />
-              {jobState.kdpCoverPdfUrl ? "Download Interior PDF" : "Download PDF"}
+              Download PDF
             </a>
           </Button>
-          {jobState.kdpCoverPdfUrl && (
-            <Button variant="outline" asChild className="flex-1">
-              <a
-                href={jobState.kdpCoverPdfUrl}
-                download={jobState.filename.replace(/\.pdf$/i, "-kdp-cover.pdf")}
-              >
-                <Download className="h-4 w-4 mr-2" />
-                Download KDP Cover PDF
-              </a>
-            </Button>
-          )}
           <Button variant="outline" asChild>
             <a href={jobState.pdfUrl} target="_blank" rel="noopener noreferrer">
               <FileText className="h-4 w-4 mr-2" />

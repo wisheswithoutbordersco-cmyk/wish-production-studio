@@ -83,7 +83,7 @@ describe("Scriptorium Quick Create", () => {
       "Do not add, remove, replace, rearrange"
     );
     expect(source).toMatch(
-      /if \(options\.referenceEnhancement && !options\.kdpPaperback\) \{\s*return \{\s*pageType: "text-heavy",\s*imagePrompt: options\.prompt/s
+      /if \(options\.referenceEnhancement\) \{\s*return \{\s*pageType: "text-heavy",\s*imagePrompt: options\.prompt/s
     );
 
     const specific = normalizeQuickCreateOptions({
@@ -341,41 +341,39 @@ describe("Scriptorium Quick Create", () => {
     );
   });
 
-  it("validates KDP paperback trim and even interior page counts", () => {
+  it("forces KDP mode to one generated page and validates trim and page side", () => {
     const normalized = normalizeQuickCreateOptions({
-      customPrompt: "A colorful storybook cover and matching interior",
+      customPrompt: "A distinct ocean scene for one storybook page",
       pageCount: 24,
       kdpPaperback: true,
       kdpTrimPreset: "8.5x6-landscape",
-      kdpPaperType: "premium-color",
+      kdpPageSide: "left",
     });
     expect(normalized.kdpPaperback).toBe(true);
-    expect(normalized.pageCount).toBe(24);
+    expect(normalized.pageCount).toBe(1);
     expect(normalized.sizePreset).toBe("kdp-8.5x6-landscape");
     expect(normalized.kdpTrimPreset).toBe("8.5x6-landscape");
-    expect(normalized.kdpPaperType).toBe("premium-color");
+    expect(normalized.kdpPageSide).toBe("left");
 
-    const thirtyPages = normalizeQuickCreateOptions({
-      customPrompt: "A 30-page paperback book",
-      pageCount: 30,
+    const defaultSide = normalizeQuickCreateOptions({
+      customPrompt: "Another single storybook page",
+      pageCount: 1,
       kdpPaperback: true,
     });
-    expect(thirtyPages.pageCount).toBe(30);
+    expect(defaultSide.pageCount).toBe(1);
+    expect(defaultSide.kdpPageSide).toBe("right");
 
-    for (const invalidCount of [23, 25, 29]) {
-      expect(() =>
-        normalizeQuickCreateOptions({
-          customPrompt: "A paperback book",
-          pageCount: invalidCount,
-          kdpPaperback: true,
-        })
-      ).toThrow(
-        "KDP paperback mode needs an even interior page count between 24 and 30"
-      );
-    }
+    expect(() =>
+      normalizeQuickCreateOptions({
+        customPrompt: "A page with an invalid edge",
+        pageCount: 1,
+        kdpPaperback: true,
+        kdpPageSide: "center" as never,
+      })
+    ).toThrow("KDP page side is invalid");
   });
 
-  it("uses landscape image generation and KDP-specific safe-area prompts", () => {
+  it("uses landscape image generation and KDP interior safe-area prompts", () => {
     expect(getImageGenerationSize({ width: 2550, height: 1800 })).toBe(
       "1536x1024"
     );
@@ -383,17 +381,18 @@ describe("Scriptorium Quick Create", () => {
       "1024x1536"
     );
 
-    const coverPrompt = buildScriptoriumUserPrompt({
-      prompt: "A colorful ocean picture-book cover",
+    const pagePrompt = buildScriptoriumUserPrompt({
+      prompt: "A colorful ocean story page",
       pageIndex: 0,
-      totalPages: 25,
+      totalPages: 1,
       branding: "none",
       sizeLabel: "8.5×6 landscape",
-      kdpPageType: "cover",
+      kdpPageType: "interior",
     });
-    expect(coverPrompt).toContain("Separate front-cover panel");
-    expect(coverPrompt).toContain("not create a wraparound cover");
-    expect(coverPrompt).toContain("0.375 inches inside");
+    expect(pagePrompt).toContain("KDP INTERIOR");
+    expect(pagePrompt).toContain("8.5×6 landscape");
+    expect(pagePrompt).toContain("Page 1 of 1");
+    expect(pagePrompt).toContain("0.375 inches inside trim edges");
 
     const interiorPrompt = buildScriptoriumFallbackPrompt({
       prompt: "A colorful ocean story page",
@@ -405,6 +404,15 @@ describe("Scriptorium Quick Create", () => {
     });
     expect(interiorPrompt).toContain("8.5×6 landscape composition");
     expect(interiorPrompt).toContain("at least 0.375 inches inside trim edges");
+
+    const singleColoringPage = normalizeQuickCreateOptions({
+      customPrompt: "Convert the source photo to coloring art",
+      pageCount: 28,
+      kdpPaperback: true,
+      outputStyle: "reference-coloring",
+      referenceImages: [testReference],
+    });
+    expect(singleColoringPage.pageCount).toBe(1);
   });
 });
 

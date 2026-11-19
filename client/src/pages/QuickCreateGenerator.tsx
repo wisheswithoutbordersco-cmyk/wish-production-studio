@@ -37,18 +37,15 @@ import {
 } from "@/lib/quickCreateReferences";
 
 const PAGE_OPTIONS = [1, 2, 3, 4, 5, 10, 15, 20, 24, 25, 26, 28, 30];
-const KDP_PAGE_OPTIONS = [24, 26, 28, 30];
 const KDP_TRIM_OPTIONS = [
   { id: "6x9", label: "6 × 9 in · Portrait" },
   { id: "8.5x11", label: "8.5 × 11 in · Portrait" },
   { id: "8.5x8.5", label: "8.5 × 8.5 in · Square" },
   { id: "8.5x6-landscape", label: "8.5 × 6 in · Landscape" },
 ] as const;
-const KDP_PAPER_OPTIONS = [
-  { id: "premium-color", label: "Premium color · white paper" },
-  { id: "standard-color", label: "Standard color · white paper" },
-  { id: "black-white-white", label: "Black ink · white paper" },
-  { id: "black-white-cream", label: "Black ink · cream paper" },
+const KDP_PAGE_SIDE_OPTIONS = [
+  { id: "right", label: "Right-hand page (odd page)" },
+  { id: "left", label: "Left-hand page (even page)" },
 ] as const;
 const PAGE_COUNT_STORAGE_KEY = "wish-production-studio.quick-create.page-count";
 
@@ -79,7 +76,13 @@ const SIZE_OPTIONS = [
 
 type SizePreset = (typeof SIZE_OPTIONS)[number]["id"];
 type KdpTrimPreset = (typeof KDP_TRIM_OPTIONS)[number]["id"];
-type KdpPaperType = (typeof KDP_PAPER_OPTIONS)[number]["id"];
+type KdpPageSide = (typeof KDP_PAGE_SIDE_OPTIONS)[number]["id"];
+const KDP_BLEED_ASPECT_RATIOS: Record<KdpTrimPreset, number> = {
+  "6x9": 6.125 / 9.25,
+  "8.5x11": 8.625 / 11.25,
+  "8.5x8.5": 8.625 / 8.75,
+  "8.5x6-landscape": 8.625 / 6.25,
+};
 type QuickCreateOutputStyle = "full-color" | "coloring" | "reference-coloring";
 type ReferenceMappingMode = "guidance" | "process-steps";
 
@@ -210,8 +213,7 @@ export default function QuickCreateGenerator() {
   const [kdpPaperback, setKdpPaperback] = useState(false);
   const [kdpTrimPreset, setKdpTrimPreset] =
     useState<KdpTrimPreset>("8.5x6-landscape");
-  const [kdpPaperType, setKdpPaperType] =
-    useState<KdpPaperType>("premium-color");
+  const [kdpPageSide, setKdpPageSide] = useState<KdpPageSide>("right");
   const [showPageNumbers, setShowPageNumbers] = useState(false);
   const [upscale, setUpscale] = useState(true);
   // Whether the server has REPLICATE_API_TOKEN — checked via a lightweight env
@@ -318,6 +320,7 @@ export default function QuickCreateGenerator() {
     (referenceImages.length > 0 &&
       referenceImages.every(image => image.stepDescription.trim().length > 0));
   const effectivePageCount =
+    kdpPaperback ||
     referenceMappingMode === "process-steps" ||
     outputStyle === "reference-coloring"
       ? 1
@@ -325,9 +328,6 @@ export default function QuickCreateGenerator() {
 
   const handleKdpModeChange = (enabled: boolean) => {
     setKdpPaperback(enabled);
-    if (enabled && !KDP_PAGE_OPTIONS.includes(pageCount)) {
-      setPageCount(24);
-    }
   };
 
   const handleGenerate = () => {
@@ -347,7 +347,7 @@ export default function QuickCreateGenerator() {
       sizePreset,
       kdpPaperback,
       kdpTrimPreset,
-      kdpPaperType,
+      kdpPageSide,
       showPageNumbers,
       upscale,
       expectedReferenceImageCount: referenceImages.length,
@@ -439,8 +439,7 @@ export default function QuickCreateGenerator() {
                 disabled={
                   isGenerating ||
                   isPreparingReferences ||
-                  outputStyle !== "full-color" ||
-                  kdpPaperback
+                  outputStyle !== "full-color"
                 }
                 className={toggleBtnClass}
               >
@@ -696,25 +695,21 @@ export default function QuickCreateGenerator() {
                 type="button"
                 aria-pressed={kdpPaperback}
                 onClick={() => handleKdpModeChange(true)}
-                disabled={
-                  isGenerating ||
-                  outputStyle === "reference-coloring" ||
-                  referenceMappingMode === "process-steps"
-                }
+                disabled={isGenerating}
                 className={toggleBtnClass}
               >
-                KDP Paperback
+                KDP Page Image
               </button>
             </div>
             {kdpPaperback && (
               <div className="space-y-3 rounded-md border border-white/10 bg-black/20 p-3">
                 <p className="text-xs leading-relaxed text-white/60">
-                  Creates an even 24–30 interior page count with paperback bleed, plus a separate full-wrap cover PDF. The first generated image is the front cover; the back and spine are blank for KDP’s barcode (spine text is not supported for these page counts). Include the exact book title and author in your prompt, then proofread the generated lettering. Choose the same trim and paper options you will select in KDP. Add page numbers in the artwork; PDF overlays are disabled. Review both files in KDP’s Print Previewer before publishing, since generated content still needs your review.
+                  Generates exactly one image per run, so you can change the prompt for each distinct book page and assemble the PNGs in Canva. The selected trim is the final cut size; the PNG and matching one-page PDF include 0.125 in of bleed at the top, bottom, and selected outside edge. Choose right-hand (odd) or left-hand (even) to match the page position. Add page numbers in Canva if needed, and review the finished book in KDP Previewer. This mode does not generate a repeated batch or a cover wrap.
                 </p>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label htmlFor="quick-kdp-trim" className="text-xs text-white/65">
-                      Paperback trim size
+                      KDP trim size
                     </Label>
                     <Select
                       value={kdpTrimPreset}
@@ -734,19 +729,19 @@ export default function QuickCreateGenerator() {
                     </Select>
                   </div>
                   <div className="space-y-1.5">
-                    <Label htmlFor="quick-kdp-paper" className="text-xs text-white/65">
-                      Ink and paper
+                    <Label htmlFor="quick-kdp-side" className="text-xs text-white/65">
+                      Page position for outside bleed
                     </Label>
                     <Select
-                      value={kdpPaperType}
-                      onValueChange={value => setKdpPaperType(value as KdpPaperType)}
+                      value={kdpPageSide}
+                      onValueChange={value => setKdpPageSide(value as KdpPageSide)}
                       disabled={isGenerating}
                     >
-                      <SelectTrigger id="quick-kdp-paper" className="h-11 border-white/15 bg-black text-white">
+                      <SelectTrigger id="quick-kdp-side" className="h-11 border-white/15 bg-black text-white">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {KDP_PAPER_OPTIONS.map(option => (
+                        {KDP_PAGE_SIDE_OPTIONS.map(option => (
                           <SelectItem key={option.id} value={option.id}>
                             {option.label}
                           </SelectItem>
@@ -781,8 +776,7 @@ export default function QuickCreateGenerator() {
                   disabled={
                     isGenerating ||
                     (referenceMappingMode === "process-steps" &&
-                      opt.id !== "full-color") ||
-                    (kdpPaperback && opt.id === "reference-coloring")
+                      opt.id !== "full-color")
                   }
                   aria-pressed={outputStyle === opt.id}
                   className={toggleBtnClass}
@@ -889,36 +883,39 @@ export default function QuickCreateGenerator() {
           )}
 
           {/* Page Count Buttons */}
-          <div className="space-y-2">
-            <Label>
-              {kdpPaperback
-                ? `Interior pages: ${effectivePageCount} + separate cover`
-                : `Pages: ${effectivePageCount}`}
-            </Label>
-            <div className="flex flex-wrap gap-2">
-              {(kdpPaperback ? KDP_PAGE_OPTIONS : PAGE_OPTIONS).map(n => (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => setPageCount(n)}
-                  disabled={
-                    isGenerating ||
-                    referenceMappingMode === "process-steps" ||
-                    outputStyle === "reference-coloring"
-                  }
-                  aria-pressed={
-                    referenceMappingMode === "process-steps" ||
-                    outputStyle === "reference-coloring"
-                      ? n === 1
-                      : pageCount === n
-                  }
-                  className={toggleBtnClass}
-                >
-                  {n}
-                </button>
-              ))}
+          {kdpPaperback ? (
+            <div className="space-y-2">
+              <Label>Pages per run</Label>
+              <p className="text-sm text-muted-foreground">1 page image. Change the prompt and generate again for the next page.</p>
             </div>
-          </div>
+          ) : (
+            <div className="space-y-2">
+              <Label>Pages: {effectivePageCount}</Label>
+              <div className="flex flex-wrap gap-2">
+                {PAGE_OPTIONS.map(n => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setPageCount(n)}
+                    disabled={
+                      isGenerating ||
+                      referenceMappingMode === "process-steps" ||
+                      outputStyle === "reference-coloring"
+                    }
+                    aria-pressed={
+                      referenceMappingMode === "process-steps" ||
+                      outputStyle === "reference-coloring"
+                        ? n === 1
+                        : pageCount === n
+                    }
+                    className={toggleBtnClass}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Generate Button */}
           <Button
@@ -966,6 +963,11 @@ export default function QuickCreateGenerator() {
                 jobState={jobState}
                 isGenerating={isGenerating}
                 progress={progress}
+                pageAspectRatio={
+                  kdpPaperback
+                    ? KDP_BLEED_ASPECT_RATIOS[kdpTrimPreset]
+                    : undefined
+                }
                 onCancel={cancelJob}
                 productMeta={{
                   title: prompt.slice(0, 60) || "Quick Create",
@@ -978,20 +980,24 @@ export default function QuickCreateGenerator() {
               {pngUrls.length > 0 && (
                 <div className="space-y-2 pt-2 border-t border-border">
                   <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">
-                    Download PNGs
+                    {kdpPaperback ? "Download PNG for Canva" : "Download PNGs"}
                   </p>
                   <div className="flex flex-wrap gap-2">
                     {pngUrls.map(({ pageNumber, url }) => (
                       <a
                         key={pageNumber}
                         href={url}
-                        download={`page-${String(pageNumber).padStart(3, "0")}.png`}
+                        download={
+                          kdpPaperback
+                            ? `kdp-${kdpTrimPreset}-${kdpPageSide}-page.png`
+                            : `page-${String(pageNumber).padStart(3, "0")}.png`
+                        }
                         target="_blank"
                         rel="noopener noreferrer"
                         className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium border border-input text-muted-foreground hover:border-primary hover:text-primary focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-2 transition-colors"
                       >
                         <Download className="h-3 w-3" />
-                        PNG {pageNumber}
+                        {kdpPaperback ? "KDP PNG" : `PNG ${pageNumber}`}
                       </a>
                     ))}
                   </div>
