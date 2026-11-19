@@ -206,9 +206,10 @@ export function buildScriptoriumUserPrompt({
     referenceMappingMode,
     referenceImages
   );
-  const kdpPageInstructions = kdpPageType === "interior"
-    ? `\n\nKDP INTERIOR: This page is ${sizeLabel}. Keep important text and details at least 0.375 inches inside trim edges; artwork can continue into bleed.`
-    : "";
+  const kdpPageInstructions =
+    kdpPageType === "interior"
+      ? `\n\nKDP INTERIOR: This page is ${sizeLabel}. Keep important text and details at least 0.375 inches inside trim edges; artwork can continue into bleed.`
+      : "";
   const pageDescription = `Page ${pageIndex + 1} of ${totalPages}`;
   return `USER REQUEST:
 ${prompt}${processStepInstructions}${kdpPageInstructions}
@@ -242,15 +243,26 @@ export function buildScriptoriumFallbackPrompt({
   }
 
   const fallback = `Create ONE complete, flat, full-page professional publication page based exactly on this request: "${prompt}". Infer the product type, audience, complexity, tone, and purpose solely from the user\'s words. This is page ${pageIndex + 1} of ${totalPages}. Preserve the requested product type and use the structure, content, fields, copy, and page conventions that genuinely belong to it. Do not turn the request into a school worksheet, quiz, lesson, math exercise, or answer-blank activity unless the user explicitly requested that format. Use an 8.5x11-inch portrait composition filling the entire canvas edge-to-edge, never a photographed paper, mockup, frame, or page on a background. Render all necessary page text directly in the image with correct spelling and a polished font hierarchy. For a full-color page, use bold saturated vivid colors, high contrast, a rich vibrant palette, and intense clean color separation. Avoid beige, cream, muted earth tones, dusty colors, desaturated or washed-out color, and soft pastel palettes unless the user explicitly requested them. Use crisp typography, clean edges, sharply defined illustrations or characters when appropriate, balanced spacing, and refined subject-relevant visual details. Make the result look like a premium, vibrant, professionally published, print-ready product.${brandingSuffix}`;
-  const pageRoleInstruction = kdpPageType === "interior"
-    ? "This is a KDP paperback interior page; keep important text and details at least 0.375 inches inside trim edges."
-    : `This is page ${pageIndex + 1} of ${totalPages}.`;
+  const pageRoleInstruction =
+    kdpPageType === "interior"
+      ? "This is a KDP paperback interior page; keep important text and details at least 0.375 inches inside trim edges."
+      : `This is page ${pageIndex + 1} of ${totalPages}.`;
   return fallback
-    .replace("Use an 8.5x11-inch portrait composition", `Use a ${sizeLabel} composition`)
-    .replace(`This is page ${pageIndex + 1} of ${totalPages}.`, pageRoleInstruction);
+    .replace(
+      "Use an 8.5x11-inch portrait composition",
+      `Use a ${sizeLabel} composition`
+    )
+    .replace(
+      `This is page ${pageIndex + 1} of ${totalPages}.`,
+      pageRoleInstruction
+    );
 }
 
-export type ImageGenerationSize = "1024x1536" | "1536x1024" | "1024x1024" | "auto";
+export type ImageGenerationSize =
+  | "1024x1536"
+  | "1536x1024"
+  | "1024x1024"
+  | "auto";
 
 export function buildScriptoriumImageRequest(
   prompt: string,
@@ -562,7 +574,10 @@ export function normalizeQuickCreateOptions(
   const outputStyle: QuickCreateOutputStyle =
     options.outputStyle || "full-color";
   const kdpPaperback = options.kdpPaperback === true;
-  if (options.kdpPaperback !== undefined && typeof options.kdpPaperback !== "boolean") {
+  if (
+    options.kdpPaperback !== undefined &&
+    typeof options.kdpPaperback !== "boolean"
+  ) {
     throw new Error("KDP page-image mode must be a boolean");
   }
   const kdpTrimPreset = options.kdpTrimPreset ?? "8.5x6-landscape";
@@ -1057,85 +1072,21 @@ export async function generateCompositionImage(
 }
 
 /**
- * Crop generated KDP artwork to the selected trim ratio without adding a
- * blurred or letterboxed margin. KDP bleed is added separately afterward.
+ * Fit the complete generated artwork onto the selected page canvas. Any unused
+ * canvas area is solid white; no part of the illustration is cropped or blurred.
  */
-export async function resizeKdpArtworkToTrim(
+export async function resizeArtworkToCanvas(
   imageBuffer: Buffer,
   width: number,
   height: number
 ): Promise<Buffer> {
   return sharp(imageBuffer)
+    .flatten({ background: "#ffffff" })
     .resize(width, height, {
-      fit: "cover",
-      position: "centre",
+      fit: "contain",
+      background: "#ffffff",
       kernel: sharp.kernel.lanczos3,
     })
-    .png({ compressionLevel: 9 })
-    .toBuffer();
-}
-
-/**
- * Preserve the complete image while filling aspect-ratio margins with a blurred
- * crop of the same image instead of white letterboxing.
- */
-export async function resizeReferenceWithBlurredBackground(
-  imageBuffer: Buffer,
-  width: number,
-  height: number
-): Promise<Buffer> {
-  const metadata = await sharp(imageBuffer).metadata();
-  if (!metadata.width || !metadata.height) {
-    throw new Error("Cannot resize a reference image without dimensions");
-  }
-
-  if (metadata.width * height === metadata.height * width) {
-    return sharp(imageBuffer)
-      .resize(width, height, {
-        fit: "contain",
-        background: "#ffffff",
-        kernel: sharp.kernel.lanczos3,
-      })
-      .png({ compressionLevel: 9 })
-      .toBuffer();
-  }
-
-  const scale = Math.min(width / metadata.width, height / metadata.height);
-  const foregroundWidth = Math.max(1, Math.round(metadata.width * scale));
-  const foregroundHeight = Math.max(1, Math.round(metadata.height * scale));
-  const blurSigma = Math.max(
-    8,
-    Math.min(40, Math.round(Math.min(width, height) * 0.0125))
-  );
-
-  const [background, foreground] = await Promise.all([
-    sharp(imageBuffer)
-      .flatten({ background: "#ffffff" })
-      .resize(width, height, {
-        fit: "cover",
-        position: "centre",
-        kernel: sharp.kernel.lanczos3,
-      })
-      .blur(blurSigma)
-      .png()
-      .toBuffer(),
-    sharp(imageBuffer)
-      .resize(foregroundWidth, foregroundHeight, {
-        fit: "fill",
-        kernel: sharp.kernel.lanczos3,
-      })
-      .png()
-      .toBuffer(),
-  ]);
-
-  return sharp(background)
-    .composite([
-      {
-        input: foreground,
-        left: Math.floor((width - foregroundWidth) / 2),
-        top: Math.floor((height - foregroundHeight) / 2),
-      },
-    ])
     .png({ compressionLevel: 9 })
     .toBuffer();
 }
@@ -1143,12 +1094,9 @@ export async function resizeReferenceWithBlurredBackground(
 async function resizeQuickCreatePageImage(
   imageBuffer: Buffer,
   width: number,
-  height: number,
-  kdpPageImage: boolean
+  height: number
 ): Promise<Buffer> {
-  return kdpPageImage
-    ? resizeKdpArtworkToTrim(imageBuffer, width, height)
-    : resizeReferenceWithBlurredBackground(imageBuffer, width, height);
+  return resizeArtworkToCanvas(imageBuffer, width, height);
 }
 
 /**
@@ -1171,8 +1119,7 @@ async function generateColoringPage(
   referenceImages: QuickCreateReferenceImage[] = [],
   expectedReferenceImageCount = referenceImages.length,
   referenceMappingMode: QuickCreateReferenceMappingMode = "guidance",
-  imageSize: ImageGenerationSize = "1024x1536",
-  kdpPageImage = false
+  imageSize: ImageGenerationSize = "1024x1536"
 ): Promise<Buffer> {
   const coloringPrompt = `${imagePrompt}. Style requirements: pure black-and-white line art coloring page, thick clean outlines only, no shading, no gray tones, no color fills, no background textures, high-contrast black lines on a pure white background, exceptionally crisp vector-like edges, sharply defined subjects, premium professional coloring-book quality suitable for high-resolution printing. Negative requirements: ${COLORING_NEGATIVE_PROMPT}.`;
 
@@ -1194,12 +1141,7 @@ async function generateColoringPage(
     .png()
     .toBuffer();
 
-  return resizeQuickCreatePageImage(
-    cleaned,
-    dims.width,
-    dims.height,
-    kdpPageImage
-  );
+  return resizeQuickCreatePageImage(cleaned, dims.width, dims.height);
 }
 
 async function generateTextHeavyPage(
@@ -1209,8 +1151,7 @@ async function generateTextHeavyPage(
   expectedReferenceImageCount = referenceImages.length,
   preserveReferenceComposition = false,
   referenceMappingMode: QuickCreateReferenceMappingMode = "guidance",
-  imageSize: ImageGenerationSize = "1024x1536",
-  kdpPageImage = false
+  imageSize: ImageGenerationSize = "1024x1536"
 ): Promise<Buffer> {
   const rawBuffer = await generateCompositionImage(
     imagePrompt,
@@ -1224,20 +1165,10 @@ async function generateTextHeavyPage(
   if (preserveReferenceComposition) {
     const enhancedBuffer =
       await applyReferenceEnhancementFinishingPass(rawBuffer);
-    return resizeQuickCreatePageImage(
-      enhancedBuffer,
-      dims.width,
-      dims.height,
-      kdpPageImage
-    );
+    return resizeQuickCreatePageImage(enhancedBuffer, dims.width, dims.height);
   }
 
-  return resizeQuickCreatePageImage(
-    rawBuffer,
-    dims.width,
-    dims.height,
-    kdpPageImage
-  );
+  return resizeQuickCreatePageImage(rawBuffer, dims.width, dims.height);
 }
 
 // ─── Page Generation ─────────────────────────────────────────────────────────
@@ -1270,8 +1201,7 @@ async function generateQuickCreatePage(
           referenceImages,
           options.expectedReferenceImageCount,
           options.referenceMappingMode,
-          imageSize,
-          options.kdpPaperback
+          imageSize
         )
       : await generateTextHeavyPage(
           composition.imagePrompt,
@@ -1280,8 +1210,7 @@ async function generateQuickCreatePage(
           options.expectedReferenceImageCount,
           options.referenceEnhancement,
           options.referenceMappingMode,
-          imageSize,
-          options.kdpPaperback
+          imageSize
         );
 
   // Optional 4× upscale via Replicate Real-ESRGAN
@@ -1399,7 +1328,9 @@ async function processQuickCreateChunkInternal(
     try {
       await saveJobMetadata(updatedJob, opts, updatedJob.filename);
       if (opts.kdpPaperback) {
-        const interiorGeometry = getKdpInteriorBleedGeometry(opts.kdpTrimPreset);
+        const interiorGeometry = getKdpInteriorBleedGeometry(
+          opts.kdpTrimPreset
+        );
         await finalizePdf(updatedJob, {
           addPdfBranding: false,
           showPageNumbers: false,

@@ -63,15 +63,19 @@ function getSavedPageCount() {
 }
 
 const SIZE_OPTIONS = [
-  { id: "8.5x11-portrait", label: "8.5×11 Portrait", aspectHint: "portrait" },
+  {
+    id: "8.5x11-portrait",
+    label: "8.5×11 Portrait",
+    aspectRatio: 8.5 / 11,
+  },
   {
     id: "8.5x11-landscape",
     label: "8.5×11 Landscape",
-    aspectHint: "landscape",
+    aspectRatio: 11 / 8.5,
   },
-  { id: "11x14", label: "11×14", aspectHint: "portrait" },
-  { id: "16x20", label: "16×20", aspectHint: "portrait" },
-  { id: "10x10-square", label: "Square (10×10)", aspectHint: "square" },
+  { id: "11x14", label: "11×14", aspectRatio: 11 / 14 },
+  { id: "16x20", label: "16×20", aspectRatio: 16 / 20 },
+  { id: "10x10-square", label: "Square (10×10)", aspectRatio: 1 },
 ] as const;
 
 type SizePreset = (typeof SIZE_OPTIONS)[number]["id"];
@@ -681,7 +685,11 @@ export default function QuickCreateGenerator() {
           {/* Publishing Format */}
           <div className="space-y-2">
             <Label>Publishing Format</Label>
-            <div className="flex flex-wrap gap-2" role="group" aria-label="Publishing format">
+            <div
+              className="flex flex-wrap gap-2"
+              role="group"
+              aria-label="Publishing format"
+            >
               <button
                 type="button"
                 aria-pressed={!kdpPaperback}
@@ -701,22 +709,44 @@ export default function QuickCreateGenerator() {
                 KDP Page Image
               </button>
             </div>
+            {!kdpPaperback && (
+              <p className="text-xs leading-relaxed text-white/60">
+                Standard fits the complete artwork on your selected page size.
+                If the ratios differ, the extra canvas stays white—no blur and
+                no cropping.
+              </p>
+            )}
             {kdpPaperback && (
               <div className="space-y-3 rounded-md border border-white/10 bg-black/20 p-3">
                 <p className="text-xs leading-relaxed text-white/60">
-                  Generates exactly one clean image per run, so you can change the prompt for each distinct book page and assemble the PNGs in Canva. The artwork is sized to the selected KDP trim; the PNG and matching one-page PDF add 0.125 in of bleed outside the trim by extending edge pixels, not by blurring the image. Choose right-hand (odd) or left-hand (even) to match the page position. Add page numbers in Canva if needed, and review the finished book in KDP Previewer. This mode does not generate a repeated batch or a cover wrap.
+                  Generates exactly one image per run. The full illustration is
+                  fitted inside the selected trim with white padding if needed,
+                  never cropped. The PNG and matching one-page PDF add 0.125 in
+                  of bleed outside the trim by extending edge pixels. Choose
+                  right-hand (odd) or left-hand (even) for the outside edge. Add
+                  page numbers in Canva if needed, and review the finished book
+                  in KDP Previewer. This mode does not generate a repeated batch
+                  or a cover wrap.
                 </p>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5">
-                    <Label htmlFor="quick-kdp-trim" className="text-xs text-white/65">
+                    <Label
+                      htmlFor="quick-kdp-trim"
+                      className="text-xs text-white/65"
+                    >
                       KDP trim size
                     </Label>
                     <Select
                       value={kdpTrimPreset}
-                      onValueChange={value => setKdpTrimPreset(value as KdpTrimPreset)}
+                      onValueChange={value =>
+                        setKdpTrimPreset(value as KdpTrimPreset)
+                      }
                       disabled={isGenerating}
                     >
-                      <SelectTrigger id="quick-kdp-trim" className="h-11 border-white/15 bg-black text-white">
+                      <SelectTrigger
+                        id="quick-kdp-trim"
+                        className="h-11 border-white/15 bg-black text-white"
+                      >
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -729,15 +759,23 @@ export default function QuickCreateGenerator() {
                     </Select>
                   </div>
                   <div className="space-y-1.5">
-                    <Label htmlFor="quick-kdp-side" className="text-xs text-white/65">
+                    <Label
+                      htmlFor="quick-kdp-side"
+                      className="text-xs text-white/65"
+                    >
                       Page position for outside bleed
                     </Label>
                     <Select
                       value={kdpPageSide}
-                      onValueChange={value => setKdpPageSide(value as KdpPageSide)}
+                      onValueChange={value =>
+                        setKdpPageSide(value as KdpPageSide)
+                      }
                       disabled={isGenerating}
                     >
-                      <SelectTrigger id="quick-kdp-side" className="h-11 border-white/15 bg-black text-white">
+                      <SelectTrigger
+                        id="quick-kdp-side"
+                        className="h-11 border-white/15 bg-black text-white"
+                      >
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -886,7 +924,10 @@ export default function QuickCreateGenerator() {
           {kdpPaperback ? (
             <div className="space-y-2">
               <Label>Pages per run</Label>
-              <p className="text-sm text-muted-foreground">1 page image. Change the prompt and generate again for the next page.</p>
+              <p className="text-sm text-muted-foreground">
+                1 page image. Change the prompt and generate again for the next
+                page.
+              </p>
             </div>
           ) : (
             <div className="space-y-2">
@@ -966,7 +1007,8 @@ export default function QuickCreateGenerator() {
                 pageAspectRatio={
                   kdpPaperback
                     ? KDP_BLEED_ASPECT_RATIOS[kdpTrimPreset]
-                    : undefined
+                    : SIZE_OPTIONS.find(option => option.id === sizePreset)
+                        ?.aspectRatio
                 }
                 onCancel={cancelJob}
                 productMeta={{

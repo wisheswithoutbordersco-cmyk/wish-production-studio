@@ -19,8 +19,7 @@ import {
   isColoringOutputStyle,
   isGenericReferenceEnhancementPrompt,
   normalizeQuickCreateOptions,
-  resizeKdpArtworkToTrim,
-  resizeReferenceWithBlurredBackground,
+  resizeArtworkToCanvas,
 } from "./generators/quickCreate";
 
 const source = readFileSync(
@@ -355,7 +354,7 @@ describe("Scriptorium Quick Create", () => {
     expect(normalized.sizePreset).toBe("kdp-8.5x6-landscape");
     expect(normalized.kdpTrimPreset).toBe("8.5x6-landscape");
     expect(normalized.kdpPageSide).toBe("left");
-    expect(clientSource).toContain("not by blurring the image");
+    expect(clientSource).toContain("never cropped");
 
     const defaultSide = normalizeQuickCreateOptions({
       customPrompt: "Another single storybook page",
@@ -418,8 +417,8 @@ describe("Scriptorium Quick Create", () => {
   });
 });
 
-describe("Quick Create reference-image finishing", () => {
-  it("crops KDP artwork to the selected trim ratio without blurred margins", async () => {
+describe("Quick Create page-canvas fitting", () => {
+  it("preserves the full illustration and uses plain white canvas padding", async () => {
     const sourceWidth = 40;
     const sourceHeight = 20;
     const channels = 3;
@@ -439,7 +438,7 @@ describe("Quick Create reference-image finishing", () => {
     })
       .png()
       .toBuffer();
-    const result = await resizeKdpArtworkToTrim(source, 20, 40);
+    const result = await resizeArtworkToCanvas(source, 20, 40);
     const { data, info } = await sharp(result)
       .raw()
       .toBuffer({ resolveWithObject: true });
@@ -451,8 +450,25 @@ describe("Quick Create reference-image finishing", () => {
     expect(info.width).toBe(20);
     expect(info.height).toBe(40);
 
-    expect(pixelAt(0, 0)).toEqual([20, 200, 40]);
-    expect(pixelAt(19, 39)).toEqual([20, 200, 40]);
+    expect(pixelAt(2, 20)[0]).toBeGreaterThan(200);
+    expect(pixelAt(17, 20)[2]).toBeGreaterThan(200);
+    expect(pixelAt(10, 20)[1]).toBeGreaterThan(150);
+    expect(pixelAt(10, 0)).toEqual([255, 255, 255]);
+    expect(pixelAt(10, 39)).toEqual([255, 255, 255]);
+  });
+
+  it("routes Standard and KDP page outputs through the same no-crop fit", () => {
+    expect(source).toMatch(
+      /async function resizeQuickCreatePageImage\([\s\S]*?return resizeArtworkToCanvas\(imageBuffer, width, height\)/
+    );
+    expect(source).toContain('fit: "contain"');
+    expect(source).toContain('background: "#ffffff"');
+    expect(source).not.toContain("resizeReferenceWithBlurredBackground");
+    expect(source).not.toContain(".blur(blurSigma)");
+    expect(clientSource).toContain("extra canvas stays white");
+    expect(clientSource).toContain(
+      "SIZE_OPTIONS.find(option => option.id === sizePreset)"
+    );
   });
 
   it("increases color richness and exposure and sharpens a synthetic edge", async () => {
@@ -510,13 +526,10 @@ describe("Quick Create reference-image finishing", () => {
     expect(sharpenedEdge).toBeGreaterThan(baselineEdge);
   });
 
-  it("routes KDP page images through clean trim sizing and keeps enhancement finishing", () => {
+  it("keeps enhancement finishing before the selected page-canvas fit", () => {
     expect(source).toMatch(
-      /async function resizeQuickCreatePageImage\([\s\S]*?return kdpPageImage\s*\?\s*resizeKdpArtworkToTrim/
+      /const enhancedBuffer\s*=\s*await\s*applyReferenceEnhancementFinishingPass\s*\(\s*rawBuffer\s*\)\s*;\s*return resizeQuickCreatePageImage\(/s
     );
-    expect(source).toMatch(
-      /const enhancedBuffer\s*=\s*await\s*applyReferenceEnhancementFinishingPass\s*\(\s*rawBuffer\s*\)\s*;\s*return resizeQuickCreatePageImage\s*\(/s
-    );
-    expect(source).toMatch(/imageSize,\s*options\.kdpPaperback\s*\)/);
+    expect(source).toMatch(/imageSize\s*\)/);
   });
 });

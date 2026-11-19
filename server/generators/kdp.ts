@@ -58,7 +58,8 @@ export function getKdpInteriorBleedGeometry(
   const pageWidthPixels = Math.round(widthInches * KDP_DPI);
   const pageHeightPixels = Math.round(heightInches * KDP_DPI);
   const topBleedPixels = Math.floor(KDP_BLEED_INCHES * KDP_DPI);
-  const bottomBleedPixels = pageHeightPixels - trimHeightPixels - topBleedPixels;
+  const bottomBleedPixels =
+    pageHeightPixels - trimHeightPixels - topBleedPixels;
 
   return {
     widthInches,
@@ -76,10 +77,9 @@ export function getKdpInteriorBleedGeometry(
 }
 
 /**
- * Extend one generated page to KDP's interior bleed size. The trim artwork
- * stays intact; bleed is added outside it by copying its edge pixels, not by
- * blurring a background. Choose the right side for odd pages and the left side
- * for even pages when assembling the book in Canva.
+ * Fit the complete page onto KDP trim without cropping, then add bleed outside
+ * the trim by copying the fitted page's edge pixels. Choose the right side for
+ * odd pages and the left side for even pages when assembling the book in Canva.
  */
 export async function addKdpInteriorBleed(
   imageBuffer: Buffer,
@@ -90,8 +90,8 @@ export async function addKdpInteriorBleed(
   const leftOutsideBleed = pageSide === "left";
   return sharp(imageBuffer)
     .resize(geometry.trimWidthPixels, geometry.trimHeightPixels, {
-      fit: "cover",
-      position: "centre",
+      fit: "contain",
+      background: "#ffffff",
       kernel: sharp.kernel.lanczos3,
     })
     .extend({
