@@ -355,14 +355,23 @@ describe("Scriptorium Quick Create", () => {
     expect(normalized.kdpTrimPreset).toBe("8.5x6-landscape");
     expect(normalized.kdpPaperType).toBe("premium-color");
 
-    for (const invalidCount of [23, 25, 30]) {
+    const thirtyPages = normalizeQuickCreateOptions({
+      customPrompt: "A 30-page paperback book",
+      pageCount: 30,
+      kdpPaperback: true,
+    });
+    expect(thirtyPages.pageCount).toBe(30);
+
+    for (const invalidCount of [23, 25, 29]) {
       expect(() =>
         normalizeQuickCreateOptions({
           customPrompt: "A paperback book",
           pageCount: invalidCount,
           kdpPaperback: true,
         })
-      ).toThrow("KDP paperback mode needs 24, 26, or 28 interior pages");
+      ).toThrow(
+        "KDP paperback mode needs an even interior page count between 24 and 30"
+      );
     }
   });
 

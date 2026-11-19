@@ -580,8 +580,15 @@ export function normalizeQuickCreateOptions(
   const kdpTrimPreset = options.kdpTrimPreset ?? "8.5x6-landscape";
   const kdpPaperType = options.kdpPaperType ?? "premium-color";
   if (kdpPaperback) {
-    if (!Number.isInteger(pageCount) || pageCount < 24 || pageCount > 28 || pageCount % 2 !== 0) {
-      throw new Error("KDP paperback mode needs 24, 26, or 28 interior pages");
+    if (
+      !Number.isInteger(pageCount) ||
+      pageCount < 24 ||
+      pageCount > MAX_PAGE_COUNT ||
+      pageCount % 2 !== 0
+    ) {
+      throw new Error(
+        `KDP paperback mode needs an even interior page count between 24 and ${MAX_PAGE_COUNT}`
+      );
     }
     if (!isKdpTrimPreset(kdpTrimPreset)) {
       throw new Error("KDP paperback trim size is invalid");

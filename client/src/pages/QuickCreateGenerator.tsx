@@ -37,7 +37,7 @@ import {
 } from "@/lib/quickCreateReferences";
 
 const PAGE_OPTIONS = [1, 2, 3, 4, 5, 10, 15, 20, 24, 25, 26, 28, 30];
-const KDP_PAGE_OPTIONS = [24, 26, 28];
+const KDP_PAGE_OPTIONS = [24, 26, 28, 30];
 const KDP_TRIM_OPTIONS = [
   { id: "6x9", label: "6 × 9 in · Portrait" },
   { id: "8.5x11", label: "8.5 × 11 in · Portrait" },
@@ -709,7 +709,7 @@ export default function QuickCreateGenerator() {
             {kdpPaperback && (
               <div className="space-y-3 rounded-md border border-white/10 bg-black/20 p-3">
                 <p className="text-xs leading-relaxed text-white/60">
-                  Creates 24, 26, or 28 interior pages with paperback bleed, plus a separate full-wrap cover PDF. The first generated image is the front cover; the back and spine are blank for KDP’s barcode (spine text is not supported for these page counts). Include the exact book title and author in your prompt, then proofread the generated lettering. Choose the same trim and paper options you will select in KDP. Add page numbers in the artwork; PDF overlays are disabled. Review both files in KDP’s Print Previewer before publishing, since generated content still needs your review.
+                  Creates an even 24–30 interior page count with paperback bleed, plus a separate full-wrap cover PDF. The first generated image is the front cover; the back and spine are blank for KDP’s barcode (spine text is not supported for these page counts). Include the exact book title and author in your prompt, then proofread the generated lettering. Choose the same trim and paper options you will select in KDP. Add page numbers in the artwork; PDF overlays are disabled. Review both files in KDP’s Print Previewer before publishing, since generated content still needs your review.
                 </p>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5">
