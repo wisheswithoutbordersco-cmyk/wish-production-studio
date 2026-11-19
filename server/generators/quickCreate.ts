@@ -258,15 +258,13 @@ export function buildScriptoriumFallbackPrompt({
     );
 }
 
-export type ImageGenerationSize =
-  | "1024x1536"
-  | "1536x1024"
-  | "1024x1024"
-  | "auto";
+export type ImageGenerationSize = `${number}x${number}`;
 
 export function buildScriptoriumImageRequest(
   prompt: string,
-  size: ImageGenerationSize = "1024x1536",
+  size: ImageGenerationSize = getImageGenerationSize(
+    SIZE_PRESETS["8.5x11-portrait"]
+  ),
   sizeLabel = "8.5×11 portrait"
 ) {
   return {
@@ -707,13 +705,78 @@ export function buildColoringPagePrompt(options: {
   return `${pageDescription} Use clean, consistently weighted outlines and generous white fillable areas. No color, gray tones, gradients, shadows, cross-hatching, stippling, background textures, or large solid-black shading; use solid black only for small essential details. Compose for a ${options.sizeLabel} page.${safeMarginInstruction} This is page ${options.pageIndex + 1} of ${options.totalPages}.`;
 }
 
+function greatestCommonDivisor(a: number, b: number): number {
+  let left = Math.abs(a);
+  let right = Math.abs(b);
+  while (right !== 0) {
+    [left, right] = [right, left % right];
+  }
+  return left;
+}
+
+function leastCommonMultiple(a: number, b: number): number {
+  return (a / greatestCommonDivisor(a, b)) * b;
+}
+
+const IMAGE_SIZE_MULTIPLE = 16;
+const MIN_CUSTOM_IMAGE_PIXELS = 655_360;
+const MAX_CUSTOM_IMAGE_PIXELS = 8_294_400;
+const MAX_CUSTOM_IMAGE_EDGE = 3_840;
+
+/**
+ * Request a provider image at the selected page's exact aspect ratio. Choose
+ * the largest valid 16-pixel-aligned custom size that does not exceed the
+ * pixel budget of the old square/portrait/landscape request.
+ */
 export function getImageGenerationSize(
   dimensions: Pick<SizeDimensions, "width" | "height">
 ): ImageGenerationSize {
-  const aspectRatio = dimensions.width / dimensions.height;
-  if (aspectRatio > 1.15) return "1536x1024";
-  if (aspectRatio < 0.85) return "1024x1536";
-  return "1024x1024";
+  const { width, height } = dimensions;
+  if (
+    !Number.isSafeInteger(width) ||
+    !Number.isSafeInteger(height) ||
+    width <= 0 ||
+    height <= 0
+  ) {
+    throw new Error("Page dimensions must be positive integers");
+  }
+
+  const divisor = greatestCommonDivisor(width, height);
+  const ratioWidth = width / divisor;
+  const ratioHeight = height / divisor;
+  const ratioArea = ratioWidth * ratioHeight;
+  const widthScaleStep =
+    IMAGE_SIZE_MULTIPLE /
+    greatestCommonDivisor(ratioWidth, IMAGE_SIZE_MULTIPLE);
+  const heightScaleStep =
+    IMAGE_SIZE_MULTIPLE /
+    greatestCommonDivisor(ratioHeight, IMAGE_SIZE_MULTIPLE);
+  const scaleStep = leastCommonMultiple(widthScaleStep, heightScaleStep);
+  const aspectRatio = width / height;
+  const previousPixelBudget =
+    aspectRatio > 1.15 || aspectRatio < 0.85 ? 1536 * 1024 : 1024 * 1024;
+  const pixelBudget = Math.min(previousPixelBudget, MAX_CUSTOM_IMAGE_PIXELS);
+  const maxScale =
+    Math.floor(
+      Math.min(
+        Math.sqrt(pixelBudget / ratioArea),
+        MAX_CUSTOM_IMAGE_EDGE / ratioWidth,
+        MAX_CUSTOM_IMAGE_EDGE / ratioHeight
+      ) / scaleStep
+    ) * scaleStep;
+  const minScale =
+    Math.ceil(Math.sqrt(MIN_CUSTOM_IMAGE_PIXELS / ratioArea) / scaleStep) *
+    scaleStep;
+
+  if (maxScale < minScale) {
+    throw new Error(
+      "Selected page ratio cannot fit supported image dimensions"
+    );
+  }
+
+  const imageWidth = ratioWidth * maxScale;
+  const imageHeight = ratioHeight * maxScale;
+  return `${imageWidth}x${imageHeight}`;
 }
 
 function wait(milliseconds: number): Promise<void> {
@@ -922,7 +985,9 @@ export function buildScriptoriumImageEditFormData(
   prompt: string,
   referenceImages: QuickCreateReferenceImage[],
   model: string,
-  size: ImageGenerationSize = "1024x1536",
+  size: ImageGenerationSize = getImageGenerationSize(
+    SIZE_PRESETS["8.5x11-portrait"]
+  ),
   referenceMappingMode: QuickCreateReferenceMappingMode = "guidance"
 ): FormData {
   if (referenceImages.length === 0) {
@@ -972,9 +1037,11 @@ export async function generateCompositionImage(
   prompt: string,
   referenceImages: QuickCreateReferenceImage[] = [],
   expectedReferenceImageCount = referenceImages.length,
-  preserveReferenceComposition = false,
+  _preserveReferenceComposition = false,
   referenceMappingMode: QuickCreateReferenceMappingMode = "guidance",
-  imageSize: ImageGenerationSize = "1024x1536"
+  imageSize: ImageGenerationSize = getImageGenerationSize(
+    SIZE_PRESETS["8.5x11-portrait"]
+  )
 ): Promise<Buffer> {
   assertReferenceImageCount(referenceImages, expectedReferenceImageCount);
   let lastError: unknown;
@@ -988,7 +1055,7 @@ export async function generateCompositionImage(
             prompt,
             referenceImages,
             model,
-            preserveReferenceComposition ? "auto" : imageSize,
+            imageSize,
             referenceMappingMode
           );
           if (
@@ -1119,7 +1186,9 @@ async function generateColoringPage(
   referenceImages: QuickCreateReferenceImage[] = [],
   expectedReferenceImageCount = referenceImages.length,
   referenceMappingMode: QuickCreateReferenceMappingMode = "guidance",
-  imageSize: ImageGenerationSize = "1024x1536"
+  imageSize: ImageGenerationSize = getImageGenerationSize(
+    SIZE_PRESETS["8.5x11-portrait"]
+  )
 ): Promise<Buffer> {
   const coloringPrompt = `${imagePrompt}. Style requirements: pure black-and-white line art coloring page, thick clean outlines only, no shading, no gray tones, no color fills, no background textures, high-contrast black lines on a pure white background, exceptionally crisp vector-like edges, sharply defined subjects, premium professional coloring-book quality suitable for high-resolution printing. Negative requirements: ${COLORING_NEGATIVE_PROMPT}.`;
 
@@ -1151,7 +1220,9 @@ async function generateTextHeavyPage(
   expectedReferenceImageCount = referenceImages.length,
   preserveReferenceComposition = false,
   referenceMappingMode: QuickCreateReferenceMappingMode = "guidance",
-  imageSize: ImageGenerationSize = "1024x1536"
+  imageSize: ImageGenerationSize = getImageGenerationSize(
+    SIZE_PRESETS["8.5x11-portrait"]
+  )
 ): Promise<Buffer> {
   const rawBuffer = await generateCompositionImage(
     imagePrompt,

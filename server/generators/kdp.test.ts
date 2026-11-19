@@ -137,6 +137,33 @@ describe("KDP single-page print geometry", () => {
     expect(Buffer.compare(rightPage, leftPage)).not.toBe(0);
   });
 
+  it("fills KDP trim and bleed without white bars for exact-ratio artwork", async () => {
+    const source = await sharp({
+      create: {
+        width: 34,
+        height: 24,
+        channels: 3,
+        background: { r: 32, g: 120, b: 220 },
+      },
+    })
+      .png()
+      .toBuffer();
+    const page = await addKdpInteriorBleed(source, "8.5x6-landscape", "right");
+    const { data, info } = await sharp(page)
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const pixelAt = (x: number, y: number) => {
+      const offset = (y * info.width + x) * info.channels;
+      return Array.from(data.subarray(offset, offset + 3));
+    };
+
+    expect([info.width, info.height]).toEqual([2588, 1875]);
+    expect(pixelAt(0, 937)).toEqual([32, 120, 220]);
+    expect(pixelAt(2587, 937)).toEqual([32, 120, 220]);
+    expect(pixelAt(100, 0)).toEqual([32, 120, 220]);
+    expect(pixelAt(100, 1874)).toEqual([32, 120, 220]);
+  });
+
   it("preserves both outer subject edges when the generated ratio differs from trim", async () => {
     const width = 100;
     const height = 20;

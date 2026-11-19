@@ -711,22 +711,21 @@ export default function QuickCreateGenerator() {
             </div>
             {!kdpPaperback && (
               <p className="text-xs leading-relaxed text-white/60">
-                Standard fits the complete artwork on your selected page size.
-                If the ratios differ, the extra canvas stays white—no blur and
-                no cropping.
+                Standard requests artwork at your selected page ratio and
+                preserves the complete illustration without cropping.
               </p>
             )}
             {kdpPaperback && (
               <div className="space-y-3 rounded-md border border-white/10 bg-black/20 p-3">
                 <p className="text-xs leading-relaxed text-white/60">
-                  Generates exactly one image per run. The full illustration is
-                  fitted inside the selected trim with white padding if needed,
-                  never cropped. The PNG and matching one-page PDF add 0.125 in
-                  of bleed outside the trim by extending edge pixels. Choose
-                  right-hand (odd) or left-hand (even) for the outside edge. Add
-                  page numbers in Canva if needed, and review the finished book
-                  in KDP Previewer. This mode does not generate a repeated batch
-                  or a cover wrap.
+                  Generates exactly one image per run at the selected trim ratio
+                  and preserves the complete illustration without cropping. The
+                  PNG and matching one-page PDF add 0.125 in of bleed outside
+                  the trim by extending edge pixels. Choose right-hand (odd) or
+                  left-hand (even) for the outside edge. Add page numbers in
+                  Canva if needed, and review the finished book in KDP
+                  Previewer. This mode does not generate a repeated batch or a
+                  cover wrap.
                 </p>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5">

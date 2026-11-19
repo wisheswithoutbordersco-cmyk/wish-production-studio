@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import sharp from "sharp";
+import { assemblePdf } from "./pdfAssembly";
 import {
   QUICK_CREATE_REFERENCE_ENHANCEMENT_PROMPT,
   SCRIPTORIUM_IMAGE_FALLBACK_MODEL,
@@ -130,6 +131,10 @@ describe("Scriptorium Quick Create", () => {
       });
     const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
     let logPayloads: unknown[] = [];
+    const selectedPageSize = getImageGenerationSize({
+      width: 2550,
+      height: 3300,
+    });
 
     try {
       // Each call represents a page request in a multi-page reference job.
@@ -137,13 +142,17 @@ describe("Scriptorium Quick Create", () => {
         "Enhance the attached reference",
         [testReference],
         1,
-        true
+        true,
+        "guidance",
+        selectedPageSize
       );
       await generateCompositionImage(
         "Enhance the attached reference",
         [testReference],
         1,
-        true
+        true,
+        "guidance",
+        selectedPageSize
       );
       logPayloads = infoSpy.mock.calls.map(([, payload]) => payload);
     } finally {
@@ -154,7 +163,8 @@ describe("Scriptorium Quick Create", () => {
     expect(requests).toHaveLength(2);
     for (const request of requests) {
       expect(request.url).toBe("https://api.openai.com/v1/images/edits");
-      expect(request.form.get("size")).toBe("auto");
+      expect(request.form.get("size")).toBe(selectedPageSize);
+      expect(request.form.get("n")).toBe("1");
       const images = request.form.getAll("image[]");
       expect(images).toHaveLength(1);
       expect((images[0] as Blob).type).toBe("image/jpeg");
@@ -175,6 +185,44 @@ describe("Scriptorium Quick Create", () => {
     const serializedLogs = JSON.stringify(logPayloads);
     expect(serializedLogs).not.toContain(testReference.data);
     expect(serializedLogs).not.toContain("https://");
+  });
+
+  it("sends one text-only image request at the selected custom page ratio", async () => {
+    const requests: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(async (input, init) => {
+        if (typeof init?.body !== "string") {
+          throw new Error("Expected a JSON image-generation request");
+        }
+        requests.push({
+          url: String(input),
+          body: JSON.parse(init.body) as Record<string, unknown>,
+        });
+        return new Response(
+          JSON.stringify({ data: [{ b64_json: "bW9jay1pbWFnZQ==" }] }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      });
+
+    try {
+      await generateCompositionImage(
+        "A colorful ocean page",
+        [],
+        0,
+        false,
+        "guidance",
+        "1360x960"
+      );
+    } finally {
+      fetchSpy.mockRestore();
+    }
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toEqual({
+      url: "https://api.openai.com/v1/images/generations",
+      body: expect.objectContaining({ n: 1, size: "1360x960" }),
+    });
   });
 
   it("does not downgrade a missing or failed reference edit to text-only generation", async () => {
@@ -261,10 +309,10 @@ describe("Scriptorium Quick Create", () => {
 
     const landscapeRequest = buildScriptoriumImageRequest(
       "A landscape picture-book page",
-      "1536x1024",
+      "1360x960",
       "8.5×6 landscape"
     );
-    expect(landscapeRequest.size).toBe("1536x1024");
+    expect(landscapeRequest.size).toBe("1360x960");
     expect(landscapeRequest.prompt).toContain("8.5×6 landscape");
   });
 
@@ -303,7 +351,7 @@ describe("Scriptorium Quick Create", () => {
       SCRIPTORIUM_IMAGE_MODEL
     );
     expect(form.get("model")).toBe(SCRIPTORIUM_IMAGE_MODEL);
-    expect(form.get("size")).toBe("1024x1536");
+    expect(form.get("size")).toBe("1088x1408");
     expect(form.get("prompt")).toContain(
       "Follow the user's explicit instructions"
     );
@@ -354,7 +402,7 @@ describe("Scriptorium Quick Create", () => {
     expect(normalized.sizePreset).toBe("kdp-8.5x6-landscape");
     expect(normalized.kdpTrimPreset).toBe("8.5x6-landscape");
     expect(normalized.kdpPageSide).toBe("left");
-    expect(clientSource).toContain("never cropped");
+    expect(clientSource).toContain("at the selected trim ratio");
 
     const defaultSide = normalizeQuickCreateOptions({
       customPrompt: "Another single storybook page",
@@ -374,12 +422,43 @@ describe("Scriptorium Quick Create", () => {
     ).toThrow("KDP page side is invalid");
   });
 
-  it("uses landscape image generation and KDP interior safe-area prompts", () => {
-    expect(getImageGenerationSize({ width: 2550, height: 1800 })).toBe(
-      "1536x1024"
+  it("requests each Standard and KDP page at its exact ratio within the old pixel budget", () => {
+    const pageSizes = [
+      { label: "Standard portrait", width: 2550, height: 3300 },
+      { label: "Standard landscape", width: 3300, height: 2550 },
+      { label: "Standard 11x14", width: 3300, height: 4200 },
+      { label: "Standard 16x20", width: 4800, height: 6000 },
+      { label: "Standard square", width: 3000, height: 3000 },
+      { label: "KDP 6x9", width: 1800, height: 2700 },
+      { label: "KDP 8.5x11", width: 2550, height: 3300 },
+      { label: "KDP square", width: 2550, height: 2550 },
+      { label: "KDP landscape", width: 2550, height: 1800 },
+    ];
+
+    for (const page of pageSizes) {
+      const [width, height] = getImageGenerationSize(page)
+        .split("x")
+        .map(Number);
+      const area = width * height;
+      const previousPixelBudget =
+        page.width / page.height > 1.15 || page.width / page.height < 0.85
+          ? 1536 * 1024
+          : 1024 * 1024;
+
+      expect(width * page.height, page.label).toBe(height * page.width);
+      expect(width % 16, page.label).toBe(0);
+      expect(height % 16, page.label).toBe(0);
+      expect(Math.max(width, height), page.label).toBeLessThanOrEqual(3840);
+      expect(area, page.label).toBeGreaterThanOrEqual(655_360);
+      expect(area, page.label).toBeLessThanOrEqual(previousPixelBudget);
+      expect(area, page.label).toBeLessThanOrEqual(8_294_400);
+    }
+
+    expect(getImageGenerationSize({ width: 2550, height: 3300 })).toBe(
+      "1088x1408"
     );
-    expect(getImageGenerationSize({ width: 1800, height: 2700 })).toBe(
-      "1024x1536"
+    expect(getImageGenerationSize({ width: 2550, height: 1800 })).toBe(
+      "1360x960"
     );
 
     const pagePrompt = buildScriptoriumUserPrompt({
@@ -457,6 +536,39 @@ describe("Quick Create page-canvas fitting", () => {
     expect(pixelAt(10, 39)).toEqual([255, 255, 255]);
   });
 
+  it("fills a Standard page without sidebars when generated at the exact page ratio", async () => {
+    const source = await sharp({
+      create: {
+        width: 34,
+        height: 44,
+        channels: 3,
+        background: { r: 22, g: 120, b: 210 },
+      },
+    })
+      .png()
+      .toBuffer();
+    const result = await resizeArtworkToCanvas(source, 170, 220);
+    const { data, info } = await sharp(result)
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const pixelAt = (x: number, y: number) => {
+      const offset = (y * info.width + x) * info.channels;
+      return Array.from(data.subarray(offset, offset + 3));
+    };
+
+    expect([info.width, info.height]).toEqual([170, 220]);
+    expect(pixelAt(0, 0)).toEqual([22, 120, 210]);
+    expect(pixelAt(169, 0)).toEqual([22, 120, 210]);
+    expect(pixelAt(0, 219)).toEqual([22, 120, 210]);
+    expect(pixelAt(169, 219)).toEqual([22, 120, 210]);
+
+    const pdf = await assemblePdf([{ imageBuffer: result }], "off", false, {
+      width: 8.5 * 72,
+      height: 11 * 72,
+    });
+    expect(pdf.toString("latin1")).toContain("/MediaBox [0 0 612 792]");
+  });
+
   it("routes Standard and KDP page outputs through the same no-crop fit", () => {
     expect(source).toMatch(
       /async function resizeQuickCreatePageImage\([\s\S]*?return resizeArtworkToCanvas\(imageBuffer, width, height\)/
@@ -465,7 +577,9 @@ describe("Quick Create page-canvas fitting", () => {
     expect(source).toContain('background: "#ffffff"');
     expect(source).not.toContain("resizeReferenceWithBlurredBackground");
     expect(source).not.toContain(".blur(blurSigma)");
-    expect(clientSource).toContain("extra canvas stays white");
+    expect(clientSource).toContain(
+      "Standard requests artwork at your selected page ratio"
+    );
     expect(clientSource).toContain(
       "SIZE_OPTIONS.find(option => option.id === sizePreset)"
     );
