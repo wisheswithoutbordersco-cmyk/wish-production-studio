@@ -1057,6 +1057,25 @@ export async function generateCompositionImage(
 }
 
 /**
+ * Crop generated KDP artwork to the selected trim ratio without adding a
+ * blurred or letterboxed margin. KDP bleed is added separately afterward.
+ */
+export async function resizeKdpArtworkToTrim(
+  imageBuffer: Buffer,
+  width: number,
+  height: number
+): Promise<Buffer> {
+  return sharp(imageBuffer)
+    .resize(width, height, {
+      fit: "cover",
+      position: "centre",
+      kernel: sharp.kernel.lanczos3,
+    })
+    .png({ compressionLevel: 9 })
+    .toBuffer();
+}
+
+/**
  * Preserve the complete image while filling aspect-ratio margins with a blurred
  * crop of the same image instead of white letterboxing.
  */
@@ -1121,6 +1140,17 @@ export async function resizeReferenceWithBlurredBackground(
     .toBuffer();
 }
 
+async function resizeQuickCreatePageImage(
+  imageBuffer: Buffer,
+  width: number,
+  height: number,
+  kdpPageImage: boolean
+): Promise<Buffer> {
+  return kdpPageImage
+    ? resizeKdpArtworkToTrim(imageBuffer, width, height)
+    : resizeReferenceWithBlurredBackground(imageBuffer, width, height);
+}
+
 /**
  * Apply a restrained, local finish so a reference enhancement changes color,
  * exposure, and edge definition even when the image model's edit is subtle.
@@ -1139,10 +1169,10 @@ async function generateColoringPage(
   imagePrompt: string,
   dims: SizeDimensions,
   referenceImages: QuickCreateReferenceImage[] = [],
-  preserveSource = false,
   expectedReferenceImageCount = referenceImages.length,
   referenceMappingMode: QuickCreateReferenceMappingMode = "guidance",
-  imageSize: ImageGenerationSize = "1024x1536"
+  imageSize: ImageGenerationSize = "1024x1536",
+  kdpPageImage = false
 ): Promise<Buffer> {
   const coloringPrompt = `${imagePrompt}. Style requirements: pure black-and-white line art coloring page, thick clean outlines only, no shading, no gray tones, no color fills, no background textures, high-contrast black lines on a pure white background, exceptionally crisp vector-like edges, sharply defined subjects, premium professional coloring-book quality suitable for high-resolution printing. Negative requirements: ${COLORING_NEGATIVE_PROMPT}.`;
 
@@ -1164,16 +1194,12 @@ async function generateColoringPage(
     .png()
     .toBuffer();
 
-  // Resize to target print dimensions
-  if (preserveSource) {
-    return resizeReferenceWithBlurredBackground(
-      cleaned,
-      dims.width,
-      dims.height
-    );
-  }
-
-  return resizeReferenceWithBlurredBackground(cleaned, dims.width, dims.height);
+  return resizeQuickCreatePageImage(
+    cleaned,
+    dims.width,
+    dims.height,
+    kdpPageImage
+  );
 }
 
 async function generateTextHeavyPage(
@@ -1183,7 +1209,8 @@ async function generateTextHeavyPage(
   expectedReferenceImageCount = referenceImages.length,
   preserveReferenceComposition = false,
   referenceMappingMode: QuickCreateReferenceMappingMode = "guidance",
-  imageSize: ImageGenerationSize = "1024x1536"
+  imageSize: ImageGenerationSize = "1024x1536",
+  kdpPageImage = false
 ): Promise<Buffer> {
   const rawBuffer = await generateCompositionImage(
     imagePrompt,
@@ -1197,14 +1224,20 @@ async function generateTextHeavyPage(
   if (preserveReferenceComposition) {
     const enhancedBuffer =
       await applyReferenceEnhancementFinishingPass(rawBuffer);
-    return resizeReferenceWithBlurredBackground(
+    return resizeQuickCreatePageImage(
       enhancedBuffer,
       dims.width,
-      dims.height
+      dims.height,
+      kdpPageImage
     );
   }
 
-  return resizeReferenceWithBlurredBackground(rawBuffer, dims.width, dims.height);
+  return resizeQuickCreatePageImage(
+    rawBuffer,
+    dims.width,
+    dims.height,
+    kdpPageImage
+  );
 }
 
 // ─── Page Generation ─────────────────────────────────────────────────────────
@@ -1235,10 +1268,10 @@ async function generateQuickCreatePage(
           composition.imagePrompt,
           dims,
           referenceImages,
-          options.outputStyle === "reference-coloring",
           options.expectedReferenceImageCount,
           options.referenceMappingMode,
-          imageSize
+          imageSize,
+          options.kdpPaperback
         )
       : await generateTextHeavyPage(
           composition.imagePrompt,
@@ -1247,7 +1280,8 @@ async function generateQuickCreatePage(
           options.expectedReferenceImageCount,
           options.referenceEnhancement,
           options.referenceMappingMode,
-          imageSize
+          imageSize,
+          options.kdpPaperback
         );
 
   // Optional 4× upscale via Replicate Real-ESRGAN

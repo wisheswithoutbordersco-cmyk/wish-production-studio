@@ -704,7 +704,7 @@ export default function QuickCreateGenerator() {
             {kdpPaperback && (
               <div className="space-y-3 rounded-md border border-white/10 bg-black/20 p-3">
                 <p className="text-xs leading-relaxed text-white/60">
-                  Generates exactly one image per run, so you can change the prompt for each distinct book page and assemble the PNGs in Canva. The selected trim is the final cut size; the PNG and matching one-page PDF include 0.125 in of bleed at the top, bottom, and selected outside edge. Choose right-hand (odd) or left-hand (even) to match the page position. Add page numbers in Canva if needed, and review the finished book in KDP Previewer. This mode does not generate a repeated batch or a cover wrap.
+                  Generates exactly one clean image per run, so you can change the prompt for each distinct book page and assemble the PNGs in Canva. The artwork is sized to the selected KDP trim; the PNG and matching one-page PDF add 0.125 in of bleed outside the trim by extending edge pixels, not by blurring the image. Choose right-hand (odd) or left-hand (even) to match the page position. Add page numbers in Canva if needed, and review the finished book in KDP Previewer. This mode does not generate a repeated batch or a cover wrap.
                 </p>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5">

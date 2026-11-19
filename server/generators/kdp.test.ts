@@ -29,11 +29,11 @@ describe("KDP single-page print geometry", () => {
     expect(isKdpPageSide(undefined)).toBe(false);
   });
 
-  it("preserves a full page image and changes only the outside-bleed placement", async () => {
+  it("adds crisp copied-edge bleed outside the selected KDP trim", async () => {
     const redLeftHalf = await sharp({
       create: {
-        width: 1275,
-        height: 1800,
+        width: 85,
+        height: 120,
         channels: 3,
         background: { r: 220, g: 35, b: 30 },
       },
@@ -45,7 +45,7 @@ describe("KDP single-page print geometry", () => {
         top: 0,
         bottom: 0,
         left: 0,
-        right: 1275,
+        right: 85,
         background: { r: 25, g: 90, b: 220 },
       })
       .png()
@@ -66,6 +66,37 @@ describe("KDP single-page print geometry", () => {
 
     expect([rightMetadata.width, rightMetadata.height]).toEqual([2588, 1875]);
     expect([leftMetadata.width, leftMetadata.height]).toEqual([2588, 1875]);
+
+    const pixelAt = (image: Buffer, x: number, y: number) =>
+      sharp(image)
+        .extract({ left: x, top: y, width: 1, height: 1 })
+        .removeAlpha()
+        .raw()
+        .toBuffer();
+    expect(
+      Buffer.compare(
+        await pixelAt(rightPage, 100, 0),
+        await pixelAt(rightPage, 100, 37)
+      )
+    ).toBe(0);
+    expect(
+      Buffer.compare(
+        await pixelAt(rightPage, 100, 1874),
+        await pixelAt(rightPage, 100, 1836)
+      )
+    ).toBe(0);
+    expect(
+      Buffer.compare(
+        await pixelAt(rightPage, 2587, 937),
+        await pixelAt(rightPage, 2549, 937)
+      )
+    ).toBe(0);
+    expect(
+      Buffer.compare(
+        await pixelAt(leftPage, 0, 937),
+        await pixelAt(leftPage, 38, 937)
+      )
+    ).toBe(0);
     expect(Buffer.compare(rightPage, leftPage)).not.toBe(0);
   });
 });

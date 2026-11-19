@@ -76,10 +76,10 @@ export function getKdpInteriorBleedGeometry(
 }
 
 /**
- * Extend one generated page to KDP's interior bleed size. The artwork stays
- * completely inside the trim area; blurred edge color fills the top, bottom,
- * and selected outside edge. Choose the right side for odd pages and the left
- * side for even pages when assembling the book in Canva.
+ * Extend one generated page to KDP's interior bleed size. The trim artwork
+ * stays intact; bleed is added outside it by copying its edge pixels, not by
+ * blurring a background. Choose the right side for odd pages and the left side
+ * for even pages when assembling the book in Canva.
  */
 export async function addKdpInteriorBleed(
   imageBuffer: Buffer,
@@ -88,37 +88,19 @@ export async function addKdpInteriorBleed(
 ): Promise<Buffer> {
   const geometry = getKdpInteriorBleedGeometry(trimPreset);
   const leftOutsideBleed = pageSide === "left";
-  const foregroundLeft = leftOutsideBleed ? geometry.outsideBleedPixels : 0;
-  const blurSigma = Math.max(8, Math.round(KDP_DPI * KDP_BLEED_INCHES * 0.55));
-
-  const [background, foreground] = await Promise.all([
-    sharp(imageBuffer)
-      .flatten({ background: "#ffffff" })
-      .resize(geometry.pageWidthPixels, geometry.pageHeightPixels, {
-        fit: "cover",
-        position: "centre",
-        kernel: sharp.kernel.lanczos3,
-      })
-      .blur(blurSigma)
-      .png()
-      .toBuffer(),
-    sharp(imageBuffer)
-      .resize(geometry.trimWidthPixels, geometry.trimHeightPixels, {
-        fit: "fill",
-        kernel: sharp.kernel.lanczos3,
-      })
-      .png()
-      .toBuffer(),
-  ]);
-
-  return sharp(background)
-    .composite([
-      {
-        input: foreground,
-        left: foregroundLeft,
-        top: geometry.topBleedPixels,
-      },
-    ])
+  return sharp(imageBuffer)
+    .resize(geometry.trimWidthPixels, geometry.trimHeightPixels, {
+      fit: "cover",
+      position: "centre",
+      kernel: sharp.kernel.lanczos3,
+    })
+    .extend({
+      top: geometry.topBleedPixels,
+      bottom: geometry.bottomBleedPixels,
+      left: leftOutsideBleed ? geometry.outsideBleedPixels : 0,
+      right: leftOutsideBleed ? 0 : geometry.outsideBleedPixels,
+      extendWith: "copy",
+    })
     .png({ compressionLevel: 9 })
     .toBuffer();
 }

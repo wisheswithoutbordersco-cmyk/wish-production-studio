@@ -19,6 +19,7 @@ import {
   isColoringOutputStyle,
   isGenericReferenceEnhancementPrompt,
   normalizeQuickCreateOptions,
+  resizeKdpArtworkToTrim,
   resizeReferenceWithBlurredBackground,
 } from "./generators/quickCreate";
 
@@ -354,6 +355,7 @@ describe("Scriptorium Quick Create", () => {
     expect(normalized.sizePreset).toBe("kdp-8.5x6-landscape");
     expect(normalized.kdpTrimPreset).toBe("8.5x6-landscape");
     expect(normalized.kdpPageSide).toBe("left");
+    expect(clientSource).toContain("not by blurring the image");
 
     const defaultSide = normalizeQuickCreateOptions({
       customPrompt: "Another single storybook page",
@@ -417,7 +419,7 @@ describe("Scriptorium Quick Create", () => {
 });
 
 describe("Quick Create reference-image finishing", () => {
-  it("fills aspect-ratio margins from a blurred source crop and preserves the full foreground", async () => {
+  it("crops KDP artwork to the selected trim ratio without blurred margins", async () => {
     const sourceWidth = 40;
     const sourceHeight = 20;
     const channels = 3;
@@ -426,10 +428,9 @@ describe("Quick Create reference-image finishing", () => {
     for (let y = 0; y < sourceHeight; y++) {
       for (let x = 0; x < sourceWidth; x++) {
         const offset = (y * sourceWidth + x) * channels;
-        const isLeftHalf = x < sourceWidth / 2;
-        pixels[offset] = isLeftHalf ? 240 : 20;
-        pixels[offset + 1] = 40;
-        pixels[offset + 2] = isLeftHalf ? 20 : 240;
+        const color =
+          x < 10 ? [240, 20, 20] : x >= 30 ? [20, 30, 240] : [20, 200, 40];
+        pixels.set(color, offset);
       }
     }
 
@@ -438,7 +439,7 @@ describe("Quick Create reference-image finishing", () => {
     })
       .png()
       .toBuffer();
-    const result = await resizeReferenceWithBlurredBackground(source, 20, 40);
+    const result = await resizeKdpArtworkToTrim(source, 20, 40);
     const { data, info } = await sharp(result)
       .raw()
       .toBuffer({ resolveWithObject: true });
@@ -450,15 +451,8 @@ describe("Quick Create reference-image finishing", () => {
     expect(info.width).toBe(20);
     expect(info.height).toBe(40);
 
-    const topFill = pixelAt(10, 2);
-    expect(topFill[0]).toBeGreaterThan(0);
-    expect(topFill[2]).toBeGreaterThan(0);
-    expect(topFill).not.toEqual([255, 255, 255]);
-
-    const foregroundLeft = pixelAt(4, 20);
-    const foregroundRight = pixelAt(15, 20);
-    expect(foregroundLeft[0]).toBeGreaterThan(foregroundLeft[2]);
-    expect(foregroundRight[2]).toBeGreaterThan(foregroundRight[0]);
+    expect(pixelAt(0, 0)).toEqual([20, 200, 40]);
+    expect(pixelAt(19, 39)).toEqual([20, 200, 40]);
   });
 
   it("increases color richness and exposure and sharpens a synthetic edge", async () => {
@@ -516,12 +510,13 @@ describe("Quick Create reference-image finishing", () => {
     expect(sharpenedEdge).toBeGreaterThan(baselineEdge);
   });
 
-  it("uses blurred fill on preserved references and finishing only on enhancement output", () => {
+  it("routes KDP page images through clean trim sizing and keeps enhancement finishing", () => {
     expect(source).toMatch(
-      /if \(preserveSource\) \{\s*return resizeReferenceWithBlurredBackground\(\s*cleaned/
+      /async function resizeQuickCreatePageImage\([\s\S]*?return kdpPageImage\s*\?\s*resizeKdpArtworkToTrim/
     );
     expect(source).toMatch(
-      /const enhancedBuffer\s*=\s*await\s*applyReferenceEnhancementFinishingPass\s*\(\s*rawBuffer\s*\)\s*;\s*return\s*resizeReferenceWithBlurredBackground\s*\(/s
+      /const enhancedBuffer\s*=\s*await\s*applyReferenceEnhancementFinishingPass\s*\(\s*rawBuffer\s*\)\s*;\s*return resizeQuickCreatePageImage\s*\(/s
     );
+    expect(source).toMatch(/imageSize,\s*options\.kdpPaperback\s*\)/);
   });
 });
